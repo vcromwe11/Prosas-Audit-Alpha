@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile data",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["LEITOR", "COMENTADOR", "EDITOR", "ADMIN", "DEV"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Report": {
+      "title": "Report",
+      "description": "A saved audit report for a candidate",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "editalName": { "type": "string" },
+        "candidateName": { "type": "string" },
+        "cnpj": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "result": { "type": "string", "description": "JSON stringified AuditResult" },
+        "manualStatus": { "type": "string", "description": "Manual evaluation status" },
+        "userNotes": { "type": "string", "description": "Manual evaluation notes" }
+      },
+      "required": ["id", "userId", "editalName", "candidateName", "timestamp", "result"]
+    },
+    "Comment": {
+      "title": "Comment",
+      "description": "A comment/proposed change on a report",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] }
+      },
+      "required": ["id", "userId", "userName", "text", "timestamp", "status"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
+      "description": "User profiles"
+    },
+    "reports/{reportId}": {
+      "schema": { "$ref": "#/entities/Report" },
+      "description": "Shared audit reports"
+    },
+    "reports/{reportId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/Comment" },
+      "description": "Comments on a specific report"
+    }
+  }
+}

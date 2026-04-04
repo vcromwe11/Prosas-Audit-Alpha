@@ -1,0 +1,5 @@
+{
+  "name": "Prosas IA",
+  "description": "Uma ferramenta de auditoria automatizada para analisar propostas de investimento social a partir de arquivos PDF usando Gemini AI.",
+  "requestFramePermissions": []
+}

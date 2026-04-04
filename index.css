@@ -1,0 +1,95 @@
+/* index.css */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Modern Theme Overrides */
+body.theme-modern {
+  background-color: #f8fafc; /* slate-50 */
+}
+html.dark body.theme-modern {
+  background-color: #020617; /* slate-950 */
+}
+
+/* Main Content Area */
+body.theme-modern main {
+  background-color: #f8fafc !important; /* slate-50 */
+}
+html.dark body.theme-modern main {
+  background-color: #020617 !important; /* slate-950 */
+}
+
+/* Cards & Containers */
+body.theme-modern .rounded,
+body.theme-modern .rounded-lg {
+  border-radius: 1rem !important; /* 16px */
+}
+body.theme-modern .shadow-sm {
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1) !important;
+}
+body.theme-modern .bg-white {
+  background-color: #ffffff !important;
+}
+html.dark body.theme-modern .bg-white,
+html.dark body.theme-modern .bg-gray-800 {
+  background-color: #0f172a !important; /* slate-900 */
+}
+body.theme-modern .border-gray-200 {
+  border-color: #e2e8f0 !important; /* slate-200 */
+}
+html.dark body.theme-modern .border-gray-700,
+html.dark body.theme-modern .border-gray-200 {
+  border-color: #1e293b !important; /* slate-800 */
+}
+
+/* Buttons */
+body.theme-modern button.rounded {
+  border-radius: 0.75rem !important; /* 12px */
+}
+body.theme-modern .bg-prosas-blue {
+  background-color: #0284c7 !important; /* sky-600 */
+}
+body.theme-modern .hover\:bg-prosas-blueDark:hover {
+  background-color: #0369a1 !important; /* sky-700 */
+}
+
+/* Inputs */
+body.theme-modern input.rounded,
+body.theme-modern select.rounded,
+body.theme-modern textarea.rounded {
+  border-radius: 0.75rem !important;
+}
+
+/* Text Contrast */
+body.theme-modern .text-gray-500 {
+  color: #64748b !important; /* slate-500 */
+}
+body.theme-modern .text-gray-400 {
+  color: #94a3b8 !important; /* slate-400 */
+}
+html.dark body.theme-modern .text-gray-500 {
+  color: #94a3b8 !important; /* slate-400 */
+}
+html.dark body.theme-modern .text-gray-400 {
+  color: #cbd5e1 !important; /* slate-300 */
+}
+body.theme-modern .text-gray-800 {
+  color: #0f172a !important; /* slate-900 */
+}
+html.dark body.theme-modern .text-gray-800,
+html.dark body.theme-modern .text-gray-700 {
+  color: #f8fafc !important; /* slate-50 */
+}
+
+/* Accordion and Table Headers */
+body.theme-modern .bg-gray-50 {
+  background-color: #f1f5f9 !important; /* slate-100 */
+}
+html.dark body.theme-modern .bg-gray-50,
+html.dark body.theme-modern .bg-gray-700\/50,
+html.dark body.theme-modern .bg-gray-800\/50 {
+  background-color: #1e293b !important; /* slate-800 */
+}
+html.dark body.theme-modern .bg-gray-900 {
+  background-color: #020617 !important; /* slate-950 */
+}

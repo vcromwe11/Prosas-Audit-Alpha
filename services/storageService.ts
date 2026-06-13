@@ -1,6 +1,7 @@
-import { SavedReport, AuditResult, Idea, IdeaComment, StoredPrompt, GlobalPrompt, UserProfile } from '../types';
-import { db, auth } from '../firebase';
-import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, onSnapshot, writeBatch, orderBy } from 'firebase/firestore';
+import { SavedReport, AuditResult, Idea, IdeaComment, StoredPrompt, GlobalPrompt, UserProfile, RepositoryFile, RepositoryFolder } from '../types';
+import { db, auth, storage } from '../firebase';
+import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, onSnapshot, writeBatch, orderBy, where, updateDoc } from 'firebase/firestore';
+import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
@@ -72,12 +73,34 @@ export const syncUserProfile = async (): Promise<UserProfile | null> => {
     }
 
     if (!docSnap.exists()) {
+      let existingProfileByEmail: any = null;
+      try {
+        const usersRef = collection(db, 'users');
+        const querySnapshot = await getDocs(usersRef);
+        querySnapshot.forEach((doc) => {
+          const data = doc.data();
+          if (data.email && data.email.toLowerCase() === user.email?.toLowerCase()) {
+            existingProfileByEmail = data;
+          }
+        });
+      } catch (err) {
+        console.error("Erro ao verificar pré-cadastro por e-mail:", err);
+      }
+
+      if (!existingProfileByEmail) {
+        await auth.signOut();
+        throw new Error("Usuário não cadastrado. Entre em contato com um administrador para obter acesso.");
+      }
+
       const newUserProfile: UserProfile = {
         uid: user.uid,
         email: user.email || '',
-        name: user.displayName || user.email?.split('@')[0] || 'Usuário',
-        avatarUrl: user.photoURL || `https://ui-avatars.com/api/?name=${user.email || 'U'}&background=C13B2E&color=fff&size=128`,
-        role: 'viewer'
+        name: user.displayName || existingProfileByEmail.name || user.email?.split('@')[0] || 'Usuário',
+        avatarUrl: user.photoURL || existingProfileByEmail.avatarUrl || `https://ui-avatars.com/api/?name=${user.email || 'U'}&background=C13B2E&color=fff&size=128`,
+        role: existingProfileByEmail.role || 'viewer',
+        company: existingProfileByEmail.company || '',
+        state: existingProfileByEmail.state || '',
+        jobFunction: existingProfileByEmail.jobFunction || ''
       };
       
       try {
@@ -86,7 +109,7 @@ export const syncUserProfile = async (): Promise<UserProfile | null> => {
           displayName: newUserProfile.name,
           createdAt: new Date().toISOString()
         };
-        console.log("Saving user profile:", JSON.stringify(payload));
+        console.log("Saving user profile linked to pre-existing email registration:", JSON.stringify(payload));
         await setDoc(docRef, payload);
       } catch (setError) {
         handleFirestoreError(setError, OperationType.CREATE, path);
@@ -533,6 +556,17 @@ export const adminCreateUser = async (profile: Partial<UserProfile>) => {
   }
 };
 
+export const deleteUserProfile = async (uid: string) => {
+  if (!auth.currentUser) throw new Error("Requires authentication");
+  const path = `users/${uid}`;
+  try {
+    await deleteDoc(doc(db, path));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+    throw error;
+  }
+};
+
 export const saveAllReports = async (reports: SavedReport[]) => {
   if (!auth.currentUser) return;
   const userId = auth.currentUser.uid;
@@ -554,5 +588,199 @@ export const saveAllReports = async (reports: SavedReport[]) => {
     await batch.commit();
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
+  }
+};
+
+// --- Repository Folders ---
+export const subscribeToRepositoryFolders = (callback: (folders: RepositoryFolder[]) => void) => {
+  const path = `repository_folders`;
+  const q = query(collection(db, path), orderBy('createdAt', 'desc'));
+  
+  return onSnapshot(q, (snapshot) => {
+    const folders: RepositoryFolder[] = [];
+    snapshot.forEach((doc) => {
+      folders.push({ id: doc.id, ...doc.data() } as RepositoryFolder);
+    });
+    callback(folders);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, path);
+  });
+};
+
+export const createRepositoryFolder = async (name: string, parentId: string | null = null): Promise<string> => {
+  if (!auth.currentUser) throw new Error("Requires authentication");
+  
+  const folderId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+  const path = `repository_folders/${folderId}`;
+  
+  const newFolder: RepositoryFolder = {
+    id: folderId,
+    parentId,
+    name,
+    userId: auth.currentUser.uid,
+    createdAt: Date.now()
+  };
+  
+  try {
+    await setDoc(doc(db, path), newFolder);
+    return folderId;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.CREATE, path);
+    throw error;
+  }
+};
+
+export const updateRepositoryFolder = async (folderId: string, name: string) => {
+  if (!auth.currentUser) throw new Error("Requires authentication");
+  const path = `repository_folders/${folderId}`;
+  try {
+    await updateDoc(doc(db, path), { name });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+    throw error;
+  }
+};
+
+export const deleteRepositoryFolder = async (folderId: string) => {
+  if (!auth.currentUser) throw new Error("Requires authentication");
+  const path = `repository_folders/${folderId}`;
+  try {
+    // 1. Delete all files in this folder
+    const filesQuery = query(collection(db, 'repository_files'), where('folderId', '==', folderId));
+    const filesSnapshot = await getDocs(filesQuery);
+    
+    const fileDeletePromises = filesSnapshot.docs.map(async (docSnapshot) => {
+      const fileData = docSnapshot.data() as RepositoryFile;
+      // Delete from storage
+      if (fileData.storagePath) {
+        const fileRef = ref(storage, fileData.storagePath);
+        try {
+          await deleteObject(fileRef);
+        } catch (e) {
+          console.warn("Storage item might already be deleted", e);
+        }
+      }
+      // Delete from firestore
+      await deleteDoc(docSnapshot.ref);
+    });
+    await Promise.all(fileDeletePromises);
+
+    // 2. Find all subfolders and delete them recursively
+    const subfoldersQuery = query(collection(db, 'repository_folders'), where('parentId', '==', folderId));
+    const subfoldersSnapshot = await getDocs(subfoldersQuery);
+    
+    const subfolderDeletePromises = subfoldersSnapshot.docs.map(docSnapshot => {
+      return deleteRepositoryFolder(docSnapshot.id);
+    });
+    await Promise.all(subfolderDeletePromises);
+
+    // 3. Delete the folder itself
+    await deleteDoc(doc(db, path));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+    throw error;
+  }
+};
+
+// --- Repository Files ---
+export const subscribeToRepositoryFiles = (folderId: string | null, callback: (files: RepositoryFile[]) => void) => {
+  const path = `repository_files`;
+  let q;
+  if (folderId) {
+    q = query(collection(db, path), where('folderId', '==', folderId));
+  } else {
+    q = query(collection(db, path));
+  }
+  
+  return onSnapshot(q, (snapshot) => {
+    const files: RepositoryFile[] = [];
+    snapshot.forEach((doc) => {
+      files.push({ id: doc.id, ...doc.data() } as RepositoryFile);
+    });
+    // Sort locally by createdAt desc
+    files.sort((a, b) => b.createdAt - a.createdAt);
+    callback(files);
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, path);
+  });
+};
+
+export const uploadRepositoryFile = async (folderId: string, file: File, onProgress?: (progress: number) => void): Promise<string> => {
+  if (!auth.currentUser) throw new Error("Requires authentication");
+  const userId = auth.currentUser.uid;
+  const fileId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+  
+  const storagePath = `repository/${userId}/${folderId}/${fileId}_${file.name}`;
+  const storageRef = ref(storage, storagePath);
+  
+  return new Promise((resolve, reject) => {
+    const uploadTask = uploadBytesResumable(storageRef, file);
+    
+    uploadTask.on('state_changed', 
+      (snapshot) => {
+        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+        if (onProgress) onProgress(progress);
+      }, 
+      (error) => {
+        console.error("Upload error:", error);
+        reject(error);
+      }, 
+      async () => {
+        try {
+          const path = `repository_files/${fileId}`;
+          const newFile: RepositoryFile = {
+            id: fileId,
+            folderId,
+            name: file.name,
+            userId,
+            storagePath,
+            size: file.size,
+            type: file.type,
+            createdAt: Date.now()
+          };
+          
+          await setDoc(doc(db, path), newFile);
+          resolve(fileId);
+        } catch (error) {
+          reject(error);
+        }
+      }
+    );
+  });
+};
+
+export const getFileDownloadUrl = async (storagePath: string): Promise<string> => {
+  const fileRef = ref(storage, storagePath);
+  return await getDownloadURL(fileRef);
+};
+
+export const updateRepositoryFile = async (fileId: string, updates: Partial<RepositoryFile>) => {
+  const path = `repository_files/${fileId}`;
+  try {
+    await updateDoc(doc(db, path), updates);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.UPDATE, path);
+    throw error;
+  }
+};
+
+export const deleteRepositoryFile = async (file: RepositoryFile) => {
+  if (!auth.currentUser) throw new Error("Requires authentication");
+  
+  try {
+    // Delete from Storage
+    const storageRef = ref(storage, file.storagePath);
+    await deleteObject(storageRef);
+  } catch (e) {
+    console.warn("Storage object may already be deleted:", e);
+  }
+
+  const path = `repository_files/${file.id}`;
+  try {
+    // Delete from Firestore
+    await deleteDoc(doc(db, path));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, path);
+    throw error;
   }
 };

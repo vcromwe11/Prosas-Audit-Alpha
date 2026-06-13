@@ -66,8 +66,27 @@ export enum AppStage {
   SETTINGS = 'SETTINGS',
   SEARCH = 'SEARCH',
   IDEAS = 'IDEAS',
-  MANAGE_USERS = 'MANAGE_USERS',
-  DEMO_PLATFORM = 'DEMO_PLATFORM'
+  DEMO_PLATFORM = 'DEMO_PLATFORM',
+  REPOSITORY = 'REPOSITORY'
+}
+
+export interface RepositoryFolder {
+  id: string;
+  parentId?: string | null;
+  name: string;
+  userId: string;
+  createdAt: number;
+}
+
+export interface RepositoryFile {
+  id: string;
+  folderId: string;
+  name: string;
+  userId: string;
+  storagePath: string;
+  size: number;
+  type: string;
+  createdAt: number;
 }
 
 export interface PdfPage {

@@ -35,8 +35,8 @@ service cloud.firestore {
           && (!('temporaryPassword' in data) || isValidString(data.temporaryPassword, 0, 150));
       }
       
-      allow create: if (isOwner(userId) && request.resource.data.role == 'viewer') || isAdmin();
-      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role && request.resource.data.uid == resource.data.uid);
+      allow create: if ((isOwner(userId) && request.resource.data.role == 'viewer') || isAdmin()) && isValidUser(request.resource.data);
+      allow update: if (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role && request.resource.data.uid == resource.data.uid)) && isValidUser(request.resource.data);
       allow delete: if isAdmin();
 
       // Legacy Reports subcollection - for migration
@@ -76,12 +76,13 @@ service cloud.firestore {
           && (!('evaluatedAt' in data) || data.evaluatedAt == null || data.evaluatedAt is number);
       }
 
-      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid && isValidReport(request.resource.data);
         
       allow update: if isAuthenticated()
         && request.resource.data.id == resource.data.id
         && request.resource.data.userId == resource.data.userId
-        && request.resource.data.timestamp == resource.data.timestamp;
+        && request.resource.data.timestamp == resource.data.timestamp
+        && isValidReport(request.resource.data);
         
       allow delete: if isAuthenticated() && (isAdmin() || request.auth.uid == resource.data.userId);
     }
@@ -110,6 +111,22 @@ service cloud.firestore {
         allow update: if isAuthenticated() && isOwner(resource.data.userId);
         allow delete: if isAuthenticated() && isOwner(resource.data.userId);
       }
+    }
+
+    // Repository folders
+    match /repository_folders/{folderId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null; // For renaming
+      allow delete: if request.auth != null && (isAdmin() || resource.data.userId == request.auth.uid);
+    }
+
+    // Repository files
+    match /repository_files/{fileId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow update: if request.auth != null; // For renaming/reallocating
+      allow delete: if request.auth != null && (isAdmin() || resource.data.userId == request.auth.uid);
     }
   }
 }

@@ -21,6 +21,7 @@ import { DashboardScreen } from './components/DashboardScreen';
 import { SearchScreen } from './components/SearchScreen';
 import { SettingsScreen } from './components/SettingsScreen';
 import { IdeasScreen } from './components/IdeasScreen';
+import { RepositoryScreen } from './components/RepositoryScreen';
 import UserManagementScreen from './components/UserManagementScreen';
 import { DemoPlatformScreen } from './components/DemoPlatformScreen';
 import { Tooltip } from './components/Tooltip';
@@ -31,11 +32,20 @@ const MAX_CONCURRENT_SLOTS = 5; // Limite de segurança para tokens e navegador
 const CONTEXT_STORAGE_KEY = 'prosas_context_backup_v2'; // Alterado para v2 para forçar atualização dos critérios
 
 declare const google: any;
+import { useAuthGuard } from './src/hooks/useAuthGuard';
 
 const App: React.FC = () => {
   const [stage, setStage] = useState<AppStage>(AppStage.LOGIN);
   const [previousStage, setPreviousStage] = useState<AppStage>(AppStage.DASHBOARD);
   const [firebaseError, setFirebaseError] = useState<string | null>(null);
+
+  const { checkPermission } = useAuthGuard({
+    stage,
+    onUnauthorized: () => {
+      setStage(AppStage.DASHBOARD);
+      alert('Acesso não autorizado. Redirecionando para o painel principal.');
+    }
+  });
 
   useEffect(() => {
     async function testConnection() {
@@ -58,6 +68,10 @@ const App: React.FC = () => {
 
   // --- IDEAS HANDLERS ---
   const handleSaveIdea = async () => {
+      if (!checkPermission('mutate_data')) {
+          alert('Você não tem permissão para realizar esta ação.');
+          return;
+      }
       if (!newIdea.title.trim() || !newIdea.description.trim()) return;
       
       try {
@@ -70,6 +84,10 @@ const App: React.FC = () => {
   };
 
   const handleSaveComment = async (ideaId: string) => {
+      if (!checkPermission('mutate_data')) {
+          alert('Você não tem permissão para realizar esta ação.');
+          return;
+      }
       if (!newComment.trim()) return;
       
       try {
@@ -81,6 +99,10 @@ const App: React.FC = () => {
   };
 
   const handleDeleteIdea = async (ideaId: string) => {
+      if (!checkPermission('mutate_data')) {
+          alert('Você não tem permissão para realizar esta ação.');
+          return;
+      }
       if (window.confirm("Tem certeza que deseja excluir esta ideia?")) {
           setSelectedIdea(null);
           try {
@@ -217,6 +239,10 @@ const App: React.FC = () => {
   const isInitialReportsLoad = useRef(true);
 
   const handleConfirmDelete = async () => {
+    if (!checkPermission('mutate_data')) {
+        alert('Você não tem permissão para realizar esta ação.');
+        return;
+    }
     if (!reportToDelete) return;
     const reportId = reportToDelete.id;
     setIsDeleteModalOpen(false);
@@ -230,6 +256,10 @@ const App: React.FC = () => {
   };
 
   const handleUpdateReport = async (updatedReport: SavedReport) => {
+    if (!checkPermission('mutate_data')) {
+        alert('Você não tem permissão para realizar esta ação.');
+        return;
+    }
     setSelectedReport(updatedReport);
     await updateReport(updatedReport);
   };
@@ -392,7 +422,7 @@ const App: React.FC = () => {
           if (isLoginMode) {
               await signInWithEmailAndPassword(auth, email, password);
           } else {
-              await createUserWithEmailAndPassword(auth, email, password);
+              throw new Error("A criação de novas contas na tela de login está desativada por motivos de segurança.");
           }
       } catch (error: any) {
           setAuthError(error.message || "Erro na autenticação.");
@@ -501,6 +531,10 @@ const App: React.FC = () => {
   };
 
   const handleRestoreFromDrive = async () => {
+      if (!checkPermission('mutate_data')) {
+          alert('Você não tem permissão para realizar esta ação.');
+          return;
+      }
       if (!driveToken) return;
       
       if (!window.confirm("Isso substituirá os dados atuais pelos do Drive. Continuar?")) return;
@@ -682,6 +716,10 @@ const App: React.FC = () => {
 
   // 4. Iniciar Análise (Trigger Manual)
   const triggerAnalysis = async (slotId: number, withAuth: boolean = false) => {
+      if (!checkPermission('mutate_data')) {
+          alert('Você não tem permissão para realizar esta ação.');
+          return;
+      }
       const candidateIndex = candidates.findIndex(c => c.slotId === slotId);
       if (candidateIndex === -1) return;
       const candidate = candidates[candidateIndex];
@@ -954,6 +992,15 @@ const App: React.FC = () => {
                       </button>
                   </Tooltip>
 
+                  <Tooltip text="Repositório de projetos e documentos" enabled={appSettings.showTooltips}>
+                      <button 
+                         onClick={() => { handleSetStage(AppStage.REPOSITORY); setSelectedReport(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.REPOSITORY ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                      >
+                          <i className="fas fa-folder-open"></i> {!isSidebarCollapsed && "Repositório"}
+                      </button>
+                  </Tooltip>
+
                   <Tooltip text="Ajustar preferências do sistema" enabled={appSettings.showTooltips}>
                       <button 
                          onClick={() => { handleSetStage(AppStage.SETTINGS); setSelectedReport(null); }}
@@ -962,17 +1009,6 @@ const App: React.FC = () => {
                           <i className="fas fa-cog"></i> {!isSidebarCollapsed && "Configurações"}
                       </button>
                   </Tooltip>
-
-                  {(user?.role === 'admin' || !user?.role) && (
-                      <Tooltip text="Gerenciar usuários" enabled={appSettings.showTooltips}>
-                          <button 
-                             onClick={() => { handleSetStage(AppStage.MANAGE_USERS); setSelectedReport(null); }}
-                             className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.MANAGE_USERS ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
-                          >
-                              <i className="fas fa-users-cog"></i> {!isSidebarCollapsed && "Gerenciar Usuários"}
-                          </button>
-                      </Tooltip>
-                  )}
 
                   {!isSidebarCollapsed && Object.keys(groupedReports).map(editalName => (
                       <div key={editalName} className="mt-4">
@@ -1155,8 +1191,11 @@ const App: React.FC = () => {
               />
           )}
 
-          {stage === AppStage.MANAGE_USERS && user?.role === 'admin' && (
-              <UserManagementScreen />
+          {/* VIEW: REPOSITORY */}
+          {stage === AppStage.REPOSITORY && (
+              <RepositoryScreen
+                appSettings={appSettings}
+              />
           )}
 
           {stage === AppStage.SETTINGS && (

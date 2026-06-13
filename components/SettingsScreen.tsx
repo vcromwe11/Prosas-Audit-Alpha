@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { PROMPTS } from '../prompts';
 import { GlobalPrompt, UserProfile, AppStage } from '../types';
 import { subscribeToGlobalPrompts, updateGlobalPrompt, updateUserProfile } from '../services/storageService';
 import { useAnalysis } from '../src/contexts/AnalysisContext';
+import UserManagementScreen from './UserManagementScreen';
+import { useAuthGuard } from '../src/hooks/useAuthGuard';
 
 interface SettingsScreenProps {
   isDarkMode: boolean;
@@ -42,6 +44,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   });
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMsg, setProfileMsg] = useState('');
+  
+  const [activeTab, setActiveTab] = useState<'general' | 'users' | 'advanced' | 'about'>('general');
+  const [expandedFeature, setExpandedFeature] = useState<string | null>(null);
+  const { checkPermission } = useAuthGuard();
 
   useEffect(() => {
     if (user) {
@@ -76,6 +82,10 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   };
 
   const handleSavePrompt = async (key: string) => {
+      if (!checkPermission('admin_action')) {
+          alert('Ação não autorizada. Apenas administradores podem alterar prompts.');
+          return;
+      }
       if (!editingText.trim()) return;
       await updateGlobalPrompt(key, editingText);
       setEditingPrompt(null);
@@ -87,7 +97,12 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
       setIsSavingProfile(true);
       setProfileMsg('');
       try {
-          await updateUserProfile(user.uid, profileForm);
+          const safeData = { ...profileForm };
+          // Ensures role is not sent to avoid permission errors
+          if ('role' in safeData) {
+              delete (safeData as any).role;
+          }
+          await updateUserProfile(user.uid, safeData);
           setProfileMsg('Perfil atualizado com sucesso!');
           setTimeout(() => setProfileMsg(''), 3000);
       } catch (error) {
@@ -116,9 +131,58 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 Modo Demonstração (Portal)
             </button>
         </div>
+
+        <div className="flex border-b border-gray-200 dark:border-gray-700 mb-6">
+            <button
+                onClick={() => setActiveTab('general')}
+                className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${
+                    activeTab === 'general'
+                        ? 'border-prosas-blue text-prosas-blue dark:border-blue-400 dark:text-blue-400'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
+            >
+                <i className="fas fa-sliders-h mr-2"></i>Geral
+            </button>
+            {user && (
+                <button
+                    onClick={() => setActiveTab('users')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${
+                        activeTab === 'users'
+                            ? 'border-prosas-blue text-prosas-blue dark:border-blue-400 dark:text-blue-400'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                    }`}
+                >
+                    <i className="fas fa-users-cog mr-2"></i>{user.role === 'admin' ? "Gerenciar Usuários" : "Usuários Autorizados"}
+                </button>
+            )}
+            {user?.role === 'admin' && (
+                <button
+                    onClick={() => setActiveTab('advanced')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${
+                        activeTab === 'advanced'
+                            ? 'border-prosas-blue text-prosas-blue dark:border-blue-400 dark:text-blue-400'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                    }`}
+                >
+                    <i className="fas fa-code mr-2"></i>Avançado
+                </button>
+            )}
+            <button
+                onClick={() => setActiveTab('about')}
+                className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${
+                    activeTab === 'about'
+                        ? 'border-prosas-blue text-prosas-blue dark:border-blue-400 dark:text-blue-400'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
+            >
+                <i className="fas fa-info-circle mr-2"></i>Sobre
+            </button>
+        </div>
         
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200 mb-8">
-            <div className="p-6 border-b border-gray-100 dark:border-gray-700">
+        {activeTab === 'general' && (
+            <>
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200 mb-8">
+                    <div className="p-6 border-b border-gray-100 dark:border-gray-700">
                 <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4">Meus Dados Cadastrais</h2>
                 <form onSubmit={handleSaveProfile} className="space-y-4 max-w-2xl">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -333,9 +397,175 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 </div>
             </div>
 
-            {/* Advanced Section */}
-            {user?.role === 'admin' && (
-            <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
+        </div>
+        </>
+        )}
+
+        {activeTab === 'users' && (
+            <UserManagementScreen />
+        )}
+
+        {activeTab === 'about' && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
+                <div className="p-6 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
+                    <h2 className="text-xl font-bold text-gray-800 dark:text-gray-100">
+                        <i className="fas fa-info-circle text-prosas-blue mr-2"></i>Sobre o Sistema
+                    </h2>
+                </div>
+                <div className="p-6 space-y-6">
+                    <div>
+                        <p className="text-gray-600 dark:text-gray-300 text-sm leading-relaxed mb-6">
+                            Bem-vindo ao sistema de auditoria e análise documental inteligente. Esta aplicação foi desenvolvida para realizar a <strong>análise processual de editais</strong> e atuar como um centro de gestão do conhecimento. Usando Inteligência Artificial, a plataforma extrai dados críticos, avalia critérios de elegibilidade e ajuda a classificar a viabilidade técnica, otimizando drasticamente o fluxo de trabalho de equipes.
+                        </p>
+                        
+                        <h3 className="text-md font-bold text-gray-800 dark:text-gray-100 mb-4 border-b border-gray-100 dark:border-gray-700 pb-2">Principais Funcionalidades da Plataforma</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {[
+                                {
+                                    id: 'ia',
+                                    icon: 'fas fa-plus-circle',
+                                    iconClass: 'bg-blue-100 dark:bg-blue-900/30 text-prosas-blue',
+                                    title: 'Nova Análise (Motor de IA)',
+                                    shortDesc: 'Extração automática de requisitos, cronograma e contrapartidas através da leitura de manuais e editais em PDF.',
+                                    longDesc: 'O Motor de IA é o núcleo analítico do sistema. Com acesso central a arquivos (e integração com a nuvem), a IA lê o PDF integralmente e localiza seções-chave. A principal utilidade disso é a velocidade: em segundos você terá listado num formato de checklist o que sua instituição precisa providenciar de documentação e até que data, eliminando o dia inteiro lendo um documento espesso de 60 páginas.'
+                                },
+                                {
+                                    id: 'drive',
+                                    icon: 'fab fa-google-drive',
+                                    iconClass: 'bg-green-100 dark:bg-green-900/30 text-green-600',
+                                    title: 'Integração Google Drive',
+                                    shortDesc: 'Conecta e busca recursos na nuvem do Google de forma protegida para leitura da IA.',
+                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                },
+                                {
+                                    id: 'repo',
+                                    icon: 'fas fa-folder-open',
+                                    iconClass: 'bg-purple-100 dark:bg-purple-900/30 text-purple-600',
+                                    title: 'Repositório em Nuvem',
+                                    shortDesc: 'Gerenciador de arquivos completo. Criação de pastas em sub-níveis, visualização de documentos e movimentação simplificada.',
+                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                },
+                                {
+                                    id: 'ideas',
+                                    icon: 'fas fa-lightbulb',
+                                    iconClass: 'bg-amber-100 dark:bg-amber-900/30 text-amber-600',
+                                    title: 'Ideias e Notas',
+                                    shortDesc: 'Caderno de rascunhos digital para prototipar ideias, fazer avaliações pontuais e armazenar blocos de texto formatado.',
+                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                },
+                                {
+                                    id: 'dashboard',
+                                    icon: 'fas fa-chart-pie',
+                                    iconClass: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600',
+                                    title: 'Dashboard & Busca',
+                                    shortDesc: 'Uma visão gerencial do funil de aprovação com buscas textuais precisas que varrem toda a base histórica do sistema.',
+                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                },
+                                {
+                                    id: 'admin',
+                                    icon: 'fas fa-users-cog',
+                                    iconClass: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300',
+                                    title: 'Administração de Sistema',
+                                    shortDesc: 'Controle seguro de usuários autorizados e regras globais, moldando a IA de acordo com os critérios institucionais.',
+                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                }
+                            ].map((feature) => {
+                                const isExpanded = expandedFeature === feature.id;
+                                return (
+                                    <motion.div 
+                                        layout
+                                        key={feature.id}
+                                        onClick={() => setExpandedFeature(isExpanded ? null : feature.id)}
+                                        className={`flex flex-col gap-3 p-3 bg-gray-50 dark:bg-gray-800/50 rounded border cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors overflow-hidden ${isExpanded ? 'md:col-span-2 border-prosas-blue dark:border-blue-500 shadow-md' : 'border-gray-100 dark:border-gray-700 hover:border-gray-200 dark:hover:border-gray-600'}`}
+                                    >
+                                        <motion.div layout="position" className="flex items-start gap-3 w-full">
+                                            <div className={`mt-1 p-2 rounded-lg flex items-center justify-center w-8 h-8 shrink-0 ${feature.iconClass}`}>
+                                                <i className={feature.icon}></i>
+                                            </div>
+                                            <div className="flex-1">
+                                                <h4 className="font-bold text-sm text-gray-800 dark:text-gray-200">{feature.title}</h4>
+                                                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">{feature.shortDesc}</p>
+                                            </div>
+                                            <div className="shrink-0 text-gray-400 self-center px-2">
+                                                <i className={`fas ${isExpanded ? 'fa-chevron-up' : 'fa-chevron-down'} transition-transform`}></i>
+                                            </div>
+                                        </motion.div>
+                                        <AnimatePresence>
+                                            {isExpanded && (
+                                                <motion.div
+                                                    layout="position"
+                                                    initial={{ opacity: 0, height: 0 }}
+                                                    animate={{ opacity: 1, height: 'auto' }}
+                                                    exit={{ opacity: 0, height: 0 }}
+                                                    className="overflow-hidden"
+                                                >
+                                                    <div className="pt-3 border-t border-gray-200 dark:border-gray-700 mt-1">
+                                                        <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
+                                                            {feature.longDesc}
+                                                        </p>
+                                                    </div>
+                                                </motion.div>
+                                            )}
+                                        </AnimatePresence>
+                                    </motion.div>
+                                );
+                            })}
+                        </div>
+                    </div>
+
+                    <div className="bg-blue-50 dark:bg-blue-900/10 p-5 rounded-lg border border-blue-100 dark:border-blue-800 mt-6 shadow-sm">
+                        <h3 className="text-md font-bold text-blue-800 dark:text-blue-300 mb-4 flex items-center gap-2">
+                            <i className="fas fa-route"></i> Fluxo de Trabalho (Como Utilizar)
+                        </h3>
+                        <div className="space-y-4">
+                            <div className="flex gap-4">
+                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white dark:bg-blue-800 border border-blue-200 dark:border-blue-700 flex items-center justify-center text-blue-600 dark:text-blue-300 font-bold text-sm shadow-sm">1</div>
+                                <div>
+                                    <h5 className="font-semibold text-sm text-blue-900 dark:text-blue-100 mb-1">Processamento do Edital</h5>
+                                    <p className="text-xs text-blue-800/80 dark:text-blue-200/80 leading-relaxed">
+                                        Navegue até <strong>Nova Análise</strong>. Forneça o arquivo PDF de um novo programa de financiamento ou copielo. A Inteligência Artificial fará a avaliação de risco, classificando itens complexos e traçando viabilidade. 
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <div className="flex gap-4">
+                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white dark:bg-blue-800 border border-blue-200 dark:border-blue-700 flex items-center justify-center text-blue-600 dark:text-blue-300 font-bold text-sm shadow-sm">2</div>
+                                <div>
+                                    <h5 className="font-semibold text-sm text-blue-900 dark:text-blue-100 mb-1">Guarda e Compartilhamento de Anexos</h5>
+                                    <p className="text-xs text-blue-800/80 dark:text-blue-200/80 leading-relaxed">
+                                        Assim que você salva a análise inicial, entre no <strong>Repositório</strong>, crie uma estrutura de pastas para organização da instituição correspondente e armazene lá todos os termos de referência e planilhas exigidas.
+                                    </p>
+                                </div>
+                            </div>
+                            
+                            <div className="flex gap-4">
+                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white dark:bg-blue-800 border border-blue-200 dark:border-blue-700 flex items-center justify-center text-blue-600 dark:text-blue-300 font-bold text-sm shadow-sm">3</div>
+                                <div>
+                                    <h5 className="font-semibold text-sm text-blue-900 dark:text-blue-100 mb-1">Desdobramento da Estratégia</h5>
+                                    <p className="text-xs text-blue-800/80 dark:text-blue-200/80 leading-relaxed">
+                                        Utilize a área de <strong>Ideias e Notas</strong> para formular rascunhos ricos do projeto sem ter que abrir o Word. Você constrói orçamentos hipotéticos antes de formalizar em sistema.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <div className="flex gap-4">
+                                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-white dark:bg-blue-800 border border-blue-200 dark:border-blue-700 flex items-center justify-center text-blue-600 dark:text-blue-300 font-bold text-sm shadow-sm">4</div>
+                                <div>
+                                    <h5 className="font-semibold text-sm text-blue-900 dark:text-blue-100 mb-1">Acompanhamento Transparente</h5>
+                                    <p className="text-xs text-blue-800/80 dark:text-blue-200/80 leading-relaxed">
+                                        Visite o painel <strong>Visão Geral</strong> para auditar quais tipos de aprovações têm prioridade ou qual histórico já foi atendido. Toda a nuvem de equipes vê a mesma verdade dos documentos.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Advanced Section */}
+        {activeTab === 'advanced' && user?.role === 'admin' && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
                 <div className="p-6 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50">
                     <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
                         <i className="fas fa-code text-prosas-blue"></i> Configurações Avançadas
@@ -396,8 +626,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     </div>
                 </div>
             </div>
-            )}
-        </div>
+        )}
     </motion.div>
   );
 };

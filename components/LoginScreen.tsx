@@ -89,15 +89,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 Continuar com Google
             </button>
             
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-                {isLoginMode ? "Não tem uma conta? " : "Já tem uma conta? "}
-                <button 
-                    type="button" 
-                    onClick={() => setIsLoginMode(!isLoginMode)}
-                    className="text-prosas-blue hover:underline font-bold"
-                >
-                    {isLoginMode ? "Cadastre-se" : "Faça login"}
-                </button>
+            <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+                A criação de novas contas é restrita aos administradores do sistema.
             </p>
         </div>
     </div>

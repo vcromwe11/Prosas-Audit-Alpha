@@ -86,7 +86,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (isLoginMode) {
               await signInWithEmailAndPassword(auth, email, password);
           } else {
-              await createUserWithEmailAndPassword(auth, email, password);
+              throw new Error("A criação de novas contas na tela de login está desativada por motivos de segurança.");
           }
       } catch (error: any) {
           setAuthError(error.message || "Erro na autenticação.");

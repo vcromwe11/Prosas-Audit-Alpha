@@ -1,17 +1,31 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CandidateAnalysis, AppStage, AuditContext, UserProfile, SavedReport } from './types';
+import { CandidateAnalysis, AppStage, AuditContext, UserProfile, SavedReport, Idea, IdeaComment } from './types';
 import { extractTextFromPdf } from './services/pdfService';
 import { extractPdfsFromZip } from './services/zipService';
 import { runDocumentAudit, generateCriteriaFromRegulation, generateAuthRulesFromRegulation, PromptGenerationMode } from './services/geminiService';
-import { saveReport, subscribeToReports, saveAllReports, updateReport } from './services/storageService';
+import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribeToIdeas, saveIdea, saveComment, subscribeToComments, deleteIdea, deleteReport, savePrompt, getPrompt } from './services/storageService';
+import { PROMPTS } from './prompts';
 import { findBackupFile, uploadToDrive, downloadFromDrive } from './services/driveService';
 import { DEFAULT_DOCUMENT_CRITERIA } from './constants';
 import ReportViewer from './components/ReportViewer';
 import ProjectCard from './components/ProjectCard';
-import { auth, googleProvider } from './firebase';
-import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider } from 'firebase/auth';
+import { auth, googleProvider, db } from './firebase';
+import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, linkWithPopup } from 'firebase/auth';
+import { getDocFromServer, doc } from 'firebase/firestore';
+
+import { LoginScreen } from './components/LoginScreen';
+import { DashboardScreen } from './components/DashboardScreen';
+import { SearchScreen } from './components/SearchScreen';
+import { SettingsScreen } from './components/SettingsScreen';
+import { IdeasScreen } from './components/IdeasScreen';
+import UserManagementScreen from './components/UserManagementScreen';
+import { DemoPlatformScreen } from './components/DemoPlatformScreen';
+import { Tooltip } from './components/Tooltip';
+import { useAuth } from './contexts/AuthContext';
+import { useUI } from './contexts/UIContext';
+import { useAnalysis } from './contexts/AnalysisContext';
 
 // --- CONFIGURAÇÃO ---
 const GOOGLE_CLIENT_ID = "1061084015236-v7hsbbpn9vr4plou7t7k6i8v9eh3d4pq.apps.googleusercontent.com"; 
@@ -21,97 +35,90 @@ const CONTEXT_STORAGE_KEY = 'prosas_context_backup_v2'; // Alterado para v2 para
 declare const google: any;
 
 const App: React.FC = () => {
-  const [stage, setStage] = useState<AppStage>(AppStage.LOGIN);
-  const [previousStage, setPreviousStage] = useState<AppStage>(AppStage.DASHBOARD);
+  const { stage, setStage, previousStage, setPreviousStage, handleSetStage, loadingContext, setLoadingContext, isGeneratingCriteria, setIsGeneratingCriteria, context, setContext, candidates, setCandidates, allReports, setAllReports, groupedReports, setGroupedReports, selectedReport, setSelectedReport, reportToDelete, setReportToDelete, isInitialReportsLoad } = useAnalysis();
+  const { user, loading, email, setEmail, password, setPassword, isLoginMode, setIsLoginMode, authError, setAuthError, handleEmailAuth, handleGoogleAuth, handleLogout, driveToken, setDriveToken, driveStatus, setDriveStatus, driveMsg, setDriveMsg, connectDrive } = useAuth();
+  const { isDarkMode, setIsDarkMode, appSettings, setAppSettings, isSidebarCollapsed, setIsSidebarCollapsed, isIdeaModalOpen, setIsIdeaModalOpen, selectedIdea, setSelectedIdea, isDeleteModalOpen, setIsDeleteModalOpen, isExportMenuOpen, setIsExportMenuOpen, exportSuccessMsg, setExportSuccessMsg } = useUI();
 
-  const handleSetStage = (newStage: AppStage) => {
-      setPreviousStage(stage);
-      setStage(newStage);
-  };
-  const [user, setUser] = useState<UserProfile | null>(null);
-  
-  // Auth State
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoginMode, setIsLoginMode] = useState(true);
-  const [authError, setAuthError] = useState('');
+  const [firebaseError, setFirebaseError] = useState<string | null>(null);
 
-  // Dark Mode State
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    if (typeof window !== 'undefined') {
-      return localStorage.getItem('theme') === 'dark' || 
-        (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
-    }
-    return false;
-  });
-
-  // App Settings State
-  const [appSettings, setAppSettings] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('prosas_app_settings');
-      if (saved) {
-        try {
-          const parsed = JSON.parse(saved);
-          return { theme: 'classic', ...parsed };
-        } catch (e) {}
+  useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+      } catch (error) {
+        if(error instanceof Error && error.message.includes('the client is offline')) {
+          console.error("Please check your Firebase configuration. ");
+          setFirebaseError("Erro de conexão com o banco de dados. Verifique sua configuração do Firebase ou sua conexão com a internet.");
+        }
       }
     }
-    return {
-      isBoldText: false,
-      maxConcurrentSlots: 5,
-      autoSaveDrive: false,
-      compactMode: false,
-      theme: 'classic'
-    };
-  });
+    testConnection();
+  }, []);
 
-  // Apply Settings
-  useEffect(() => {
-    localStorage.setItem('prosas_app_settings', JSON.stringify(appSettings));
-    if (appSettings.isBoldText) {
-      document.body.classList.add('font-medium');
-    } else {
-      document.body.classList.remove('font-medium');
-    }
-    if (appSettings.theme === 'modern') {
-      document.body.classList.add('theme-modern');
-    } else {
-      document.body.classList.remove('theme-modern');
-    }
-  }, [appSettings]);
+  // handleSetStage moved to AnalysisContext
 
-  // Drive State
-  const [driveToken, setDriveToken] = useState<string | null>(null);
-  const [driveStatus, setDriveStatus] = useState<'disconnected' | 'ready' | 'syncing' | 'error'>('disconnected');
-  const [driveMsg, setDriveMsg] = useState('');
+  // --- IDEAS HANDLERS ---
+  const handleSaveIdea = async () => {
+      if (!newIdea.title.trim() || !newIdea.description.trim()) return;
+      
+      try {
+          await saveIdea(newIdea.title, newIdea.description);
+          setNewIdea({ title: '', description: '' });
+          setIsIdeaModalOpen(false);
+      } catch (error) {
+          console.error("Erro ao salvar ideia:", error);
+      }
+  };
 
-  // Sidebar State
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const handleSaveComment = async (ideaId: string) => {
+      if (!newComment.trim()) return;
+      
+      try {
+          await saveComment(ideaId, newComment);
+          setNewComment('');
+      } catch (error) {
+          console.error("Erro ao salvar comentário:", error);
+      }
+  };
+
+  const handleDeleteIdea = async (ideaId: string) => {
+      if (window.confirm("Tem certeza que deseja excluir esta ideia?")) {
+          setSelectedIdea(null);
+          try {
+              await deleteIdea(ideaId);
+          } catch (error) {
+              console.error("Erro ao excluir ideia:", error);
+          }
+      }
+  };
+  // useAuth handles user state
+  
+  // Ideas State
+  const [ideas, setIdeas] = useState<Idea[]>([]);
+  const [newIdea, setNewIdea] = useState({ title: '', description: '' });
+  const [newComment, setNewComment] = useState('');
+  const [ideaComments, setIdeaComments] = useState<Record<string, IdeaComment[]>>({});
+
+  // Auth state now in useAuth
+
+  // Dark Mode handled by UIContext
+
+  const [analysisMode, setAnalysisMode] = useState<'IA_COMPLETA' | 'IA_OTIMIZADA'>('IA_COMPLETA');
+
   const [isPromptVisible, setIsPromptVisible] = useState(false);
   const [isPromptMenuOpen, setIsPromptMenuOpen] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [selectedDashboardEdital, setSelectedDashboardEdital] = useState<string | null>(null);
   
-  // Search State
   const [searchQuery, setSearchQuery] = useState('');
-
-  // Delete Confirmation State
-  const [reportToDelete, setReportToDelete] = useState<SavedReport | null>(null);
-  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
-
-  // Storage & Reports
-  const [groupedReports, setGroupedReports] = useState<Record<string, SavedReport[]>>({});
-  const [allReports, setAllReports] = useState<SavedReport[]>([]);
-  const [selectedReport, setSelectedReport] = useState<SavedReport | null>(null);
-  const isInitialReportsLoad = useRef(true);
 
   const handleConfirmDelete = async () => {
     if (!reportToDelete) return;
+    const reportId = reportToDelete.id;
+    setIsDeleteModalOpen(false);
+    setReportToDelete(null);
     try {
-      const { deleteReport } = await import('./services/storageService');
-      await deleteReport(reportToDelete.id);
-      setIsDeleteModalOpen(false);
-      setReportToDelete(null);
+      await deleteReport(reportId);
     } catch (error) {
       console.error("Error deleting report:", error);
       alert("Erro ao excluir o relatório.");
@@ -132,150 +139,40 @@ const App: React.FC = () => {
       return;
     }
     if (appSettings.autoSaveDrive && driveToken && driveStatus === 'ready') {
-      handleBackupToDrive();
+      const timeoutId = setTimeout(() => {
+        handleBackupToDrive();
+      }, 10000); // 10 segundos de debounce para não fazer requisições abusivas ao Google Drive
+      
+      return () => clearTimeout(timeoutId);
     }
   }, [allReports, appSettings.autoSaveDrive, driveToken]);
 
-  // Analysis State
-  const [loadingContext, setLoadingContext] = useState(false);
-  const [isGeneratingCriteria, setIsGeneratingCriteria] = useState(false);
-  const [context, setContext] = useState<AuditContext>({
-    editalTitle: '',
-    regulationText: '',
-    formTemplateText: '',
-    miscFilesText: '',
-    criteriaText: DEFAULT_DOCUMENT_CRITERIA,
-    referenceDate: '',
-    authRules: [],
-    isReady: false
-  });
-  
-  // Alterado: Começa vazio para ser dinâmico
-  const [candidates, setCandidates] = useState<CandidateAnalysis[]>([]);
-
   // --- LIFECYCLE & PERSISTENCE ---
 
-  // 0. Dark Mode & Auth Listener
-  useEffect(() => {
-    const root = window.document.documentElement;
-    if (isDarkMode) {
-      root.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      root.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [isDarkMode]);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser) {
-        setUser({
-          name: currentUser.displayName || currentUser.email?.split('@')[0] || "Usuário",
-          email: currentUser.email || "",
-          avatarUrl: currentUser.photoURL || `https://ui-avatars.com/api/?name=${currentUser.email}&background=C13B2E&color=fff&size=128`
-        });
-        handleSetStage(AppStage.DASHBOARD);
-      } else {
-        setUser(null);
-        handleSetStage(AppStage.LOGIN);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // 1. Load context from localStorage on startup
-  useEffect(() => {
-    const savedContext = localStorage.getItem(CONTEXT_STORAGE_KEY);
-    if (savedContext) {
-        try {
-            const parsed = JSON.parse(savedContext);
-            setContext(prev => ({ ...prev, ...parsed }));
-        } catch (e) {
-            console.error("Failed to load context backup", e);
-        }
-    }
-  }, []);
-
-  // 2. Save context changes to localStorage
-  useEffect(() => {
-      // Debounce saving to avoid hitting disk on every keystroke
-      const handler = setTimeout(() => {
-          if (context.regulationText || context.criteriaText !== DEFAULT_DOCUMENT_CRITERIA) {
-            localStorage.setItem(CONTEXT_STORAGE_KEY, JSON.stringify({
-                editalTitle: context.editalTitle,
-                regulationText: context.regulationText,
-                formTemplateText: context.formTemplateText,
-                miscFilesText: context.miscFilesText,
-                criteriaText: context.criteriaText
-            }));
-          }
-      }, 1000);
-      return () => clearTimeout(handler);
-  }, [context]);
-
-  // 3. Prevent accidental tab close
-  useEffect(() => {
-    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
-      if (candidates.some(c => c.status === 'analyzing' || c.status === 'pending')) {
-        e.preventDefault();
-        e.returnValue = ''; // Required for Chrome
-        return "Há análises em andamento ou pendentes. Se sair, perderá o progresso não salvo.";
-      }
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [candidates]);
-
-
-  // Load reports when user logs in
   useEffect(() => {
     if (user) {
-      const unsubscribe = subscribeToReports((grouped, all) => {
+      const unsubscribeReports = subscribeToReports((grouped, all) => {
         setGroupedReports(grouped);
         setAllReports(all);
       });
-      return () => unsubscribe();
+      
+      const unsubscribeIdeas = subscribeToIdeas((newIdeas) => {
+        setIdeas(newIdeas);
+      });
+
+      return () => {
+        unsubscribeReports();
+        unsubscribeIdeas();
+      };
     } else {
       setGroupedReports({});
       setAllReports([]);
+      setIdeas([]);
     }
   }, [user]);
 
-  const handleEmailAuth = async (e: React.FormEvent) => {
-      e.preventDefault();
-      setAuthError('');
-      try {
-          if (isLoginMode) {
-              await signInWithEmailAndPassword(auth, email, password);
-          } else {
-              await createUserWithEmailAndPassword(auth, email, password);
-          }
-      } catch (error: any) {
-          setAuthError(error.message || "Erro na autenticação.");
-      }
-  };
-
-  const handleGoogleAuth = async () => {
-      setAuthError('');
-      try {
-          const result = await signInWithPopup(auth, googleProvider);
-          const credential = GoogleAuthProvider.credentialFromResult(result);
-          if (credential && credential.accessToken) {
-              setDriveToken(credential.accessToken);
-              setDriveStatus('ready');
-              setDriveMsg('Conectado ao Drive');
-          }
-      } catch (error: any) {
-          setAuthError(error.message || "Erro no login com Google.");
-      }
-  };
-
-  const handleLogout = async () => {
-      await signOut(auth);
-      setDriveToken(null);
-      setDriveStatus('disconnected');
+  const handleAppLogout = async () => {
+      await handleLogout();
       setCandidates([]);
       setSelectedReport(null);
       setContext({
@@ -284,35 +181,14 @@ const App: React.FC = () => {
         formTemplateText: '',
         miscFilesText: '',
         criteriaText: DEFAULT_DOCUMENT_CRITERIA,
+        referenceDate: '',
+        authRules: [],
         isReady: false
       });
       localStorage.removeItem(CONTEXT_STORAGE_KEY);
   };
 
   // --- DRIVE HANDLERS ---
-  
-  const connectDrive = () => {
-      if (typeof google === 'undefined') {
-          alert("Erro: Script do Google não carregado.");
-          return;
-      }
-      
-      const client = google.accounts.oauth2.initTokenClient({
-          client_id: GOOGLE_CLIENT_ID,
-          scope: 'https://www.googleapis.com/auth/drive.file',
-          callback: (response: any) => {
-              if (response.access_token) {
-                  setDriveToken(response.access_token);
-                  setDriveStatus('ready');
-                  setDriveMsg('Conectado ao Drive');
-              } else {
-                  setDriveStatus('error');
-                  setDriveMsg('Erro na autenticação');
-              }
-          },
-      });
-      client.requestAccessToken();
-  };
 
   const handleBackupToDrive = async () => {
       if (!driveToken) return;
@@ -330,8 +206,16 @@ const App: React.FC = () => {
           setTimeout(() => setDriveMsg('Conectado ao Drive'), 3000);
       } catch (e: any) {
           console.error(e);
-          setDriveStatus('error');
-          setDriveMsg('Erro ao salvar');
+          if (e.name === 'DriveAuthError' || e.message?.includes('Token expirado') || e.message?.includes('401')) {
+              setDriveStatus('disconnected');
+              setDriveToken(null);
+              setDriveMsg('Sessão expirada. Reconecte-se.');
+              // Optional: you can alert, but since backup happens in background, it might be annoying.
+              // For user-triggered actions, an alert is good. Here, setting status to disconnected is safe.
+          } else {
+              setDriveStatus('error');
+              setDriveMsg('Erro ao salvar');
+          }
       }
   };
 
@@ -361,8 +245,15 @@ const App: React.FC = () => {
           }
       } catch (e: any) {
           console.error(e);
-          setDriveStatus('error');
-          setDriveMsg('Erro ao restaurar');
+          if (e.name === 'DriveAuthError' || e.message?.includes('Token expirado') || e.message?.includes('401')) {
+              setDriveStatus('disconnected');
+              setDriveToken(null);
+              setDriveMsg('Sessão expirada. Reconecte-se.');
+              alert("Sua sessão do Google Drive expirou. Por favor, conecte-se novamente.");
+          } else {
+              setDriveStatus('error');
+              setDriveMsg('Erro ao restaurar');
+          }
       }
   };
 
@@ -523,37 +414,73 @@ const App: React.FC = () => {
       abortControllersRef.current[slotId] = abortController;
 
       // Set status to analyzing
-      setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, status: 'analyzing' } : c));
+      setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, status: 'analyzing', analysisPhase: 'AUTH' } : c));
 
       try {
         let authReport = "";
+        let deterministicAuthPassed = true;
+        let filesForAi = [...candidate.files];
 
         // 1. Run Deterministic Auth if requested
         if (withAuth && context.authRules.length > 0) {
             const { runDeterministicAuth } = await import('./services/authEvaluator');
-            const authResult = await runDeterministicAuth(candidate.files, context.authRules, context.referenceDate);
+            const authResult = await runDeterministicAuth(candidate.files, context.authRules, context.referenceDate, (msg) => {
+                // Update specific slot progress to show the analyst what is being validated
+                setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, currentAuthTask: msg } : c));
+            });
             authReport = authResult.report;
-            // We no longer return early here. We always proceed to AI analysis.
+            deterministicAuthPassed = authResult.passed;
+            if (analysisMode === 'IA_OTIMIZADA') {
+                filesForAi = candidate.files.filter(f => !authResult.processedFiles.includes(f.name));
+            }
         }
 
-        // 2. Run AI Analysis
-        const result = await runDocumentAudit(
-            context.regulationText,
-            context.formTemplateText,
-            context.miscFilesText,
-            context.criteriaText,
-            candidate.files,
-            [], // Do not send auth rules to AI anymore
-            abortController.signal
-        );
+        let result: any;
+        let promptText = "";
 
-        // Append deterministic auth report to the final summary if it was run
-        if (authReport) {
-            result.summary = authReport + "\n\n--- ANÁLISE COMPLEMENTAR DA IA ---\n\n" + result.summary;
+        if (analysisMode === 'IA_OTIMIZADA' && !deterministicAuthPassed) {
+            // Short-circuit: Reprovado (Inabilitação Documental) without calling AI
+            result = {
+                summary: authReport + "\n\n--- ANÁLISE INTERROMPIDA ---\n\nO candidato falhou nas triagens obrigatórias, sendo reprovado por Inabilitação Documental sem a necessidade de prosseguir com a fase de IA Completa.",
+                overallStatus: 'REPROVADO',
+                points: [{
+                    title: "Inabilitação Documental (Pré-Análise)",
+                    status: "ERROR",
+                    justification: "Candidato retido na triagem automática de documentos institucionais obrigatórios."
+                }],
+                candidateName: "Candidato Identificado na Triagem",
+                organizationData: {}
+            };
+            promptText = "N/A (Reprovação Determinística)";
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
+        } else {
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'AI_PROMPT' } : c));
+            // 2. Run AI Analysis
+            const aiData = await runDocumentAudit(
+                context.regulationText,
+                context.formTemplateText,
+                context.miscFilesText,
+                context.criteriaText,
+                filesForAi,
+                [], // Do not send auth rules to AI anymore
+                abortController.signal
+            );
+            
+            result = aiData.result;
+            promptText = aiData.promptText;
+
+            // Append deterministic auth report to the final summary if it was run
+            if (authReport) {
+                result.summary = authReport + "\n\n--- ANÁLISE COMPLEMENTAR DA IA ---\n\n" + result.summary;
+            }
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
         }
+
+        // Save prompt centrally
+        const promptId = await savePrompt(promptText);
 
         // Save immediately to DB
-        const savedReport = await saveReport(context.editalTitle, result);
+        const savedReport = await saveReport(context.editalTitle, result, promptId || undefined);
 
         // Update Slot
         setCandidates(prev => prev.map(c => {
@@ -589,73 +516,20 @@ const App: React.FC = () => {
 
   if (stage === AppStage.LOGIN) {
       return (
-          <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 p-4 transition-colors duration-200">
-              <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg max-w-md w-full text-center border-t-4 border-prosas-red transition-colors duration-200">
-                  <h1 className="text-3xl font-bold italic text-prosas-red mb-2">prosas</h1>
-                  <p className="text-gray-500 dark:text-gray-400 mb-8 text-sm">Auditoria de Projetos IA</p>
-                  
-                  {authError && (
-                      <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 p-3 rounded mb-4 text-sm text-left">
-                          {authError}
-                      </div>
-                  )}
+          <LoginScreen
+            firebaseError={firebaseError}
+          />
+      );
+  }
 
-                  <form onSubmit={handleEmailAuth} className="space-y-4 mb-6">
-                      <div>
-                          <input 
-                              type="email" 
-                              placeholder="Seu e-mail" 
-                              value={email}
-                              onChange={(e) => setEmail(e.target.value)}
-                              className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-prosas-blue outline-none"
-                              required
-                          />
-                      </div>
-                      <div>
-                          <input 
-                              type="password" 
-                              placeholder="Sua senha" 
-                              value={password}
-                              onChange={(e) => setPassword(e.target.value)}
-                              className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-prosas-blue outline-none"
-                              required
-                          />
-                      </div>
-                      <button 
-                          type="submit"
-                          className="w-full bg-prosas-red hover:bg-red-700 text-white font-bold py-3 px-4 rounded shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200"
-                      >
-                          {isLoginMode ? 'Entrar' : 'Cadastrar'}
-                      </button>
-                  </form>
-
-                  <div className="relative flex items-center py-2 mb-6">
-                      <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
-                      <span className="flex-shrink-0 mx-4 text-gray-400 dark:text-gray-500 text-sm">ou</span>
-                      <div className="flex-grow border-t border-gray-300 dark:border-gray-600"></div>
-                  </div>
-
-                  <button 
-                    onClick={handleGoogleAuth}
-                    type="button"
-                    className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-4 rounded flex items-center justify-center gap-3 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 mb-6"
-                  >
-                      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
-                      Continuar com Google
-                  </button>
-                  
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
-                      {isLoginMode ? "Não tem uma conta? " : "Já tem uma conta? "}
-                      <button 
-                          type="button" 
-                          onClick={() => setIsLoginMode(!isLoginMode)}
-                          className="text-prosas-blue hover:underline font-bold"
-                      >
-                          {isLoginMode ? "Cadastre-se" : "Faça login"}
-                      </button>
-                  </p>
-              </div>
-          </div>
+  if (stage === AppStage.DEMO_PLATFORM) {
+      return (
+        <DemoPlatformScreen 
+          handleSetStage={handleSetStage} 
+          groupedReports={groupedReports}
+          setSelectedReport={setSelectedReport}
+          onUpdateReport={handleUpdateReport}
+        />
       );
   }
 
@@ -690,6 +564,7 @@ const App: React.FC = () => {
 
           <nav className="flex-grow p-4 overflow-y-auto custom-scrollbar overflow-x-hidden">
               <div className="mb-6">
+                  {user?.role !== 'viewer' && (
                   <button 
                     onClick={() => {
                         setCandidates([]); // Reset para nova análise limpa
@@ -700,6 +575,7 @@ const App: React.FC = () => {
                   >
                       <i className="fas fa-plus"></i> {!isSidebarCollapsed && "Nova Análise"}
                   </button>
+                  )}
               </div>
 
               {/* DRIVE BACKUP SECTION */}
@@ -761,29 +637,52 @@ const App: React.FC = () => {
               )}
               
               <div className="space-y-1">
-                  <button 
-                     onClick={() => { handleSetStage(AppStage.DASHBOARD); setSelectedReport(null); setSelectedDashboardEdital(null); }}
-                     className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.DASHBOARD && !selectedDashboardEdital ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
-                     title="Visão Geral"
-                  >
-                      <i className="fas fa-th-large"></i> {!isSidebarCollapsed && "Visão Geral"}
-                  </button>
+                  <Tooltip text="Visão geral de todos os projetos e editais" enabled={appSettings.showTooltips}>
+                      <button 
+                         onClick={() => { handleSetStage(AppStage.DASHBOARD); setSelectedReport(null); setSelectedDashboardEdital(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.DASHBOARD && !selectedDashboardEdital ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                      >
+                          <i className="fas fa-th-large"></i> {!isSidebarCollapsed && "Visão Geral"}
+                      </button>
+                  </Tooltip>
 
-                  <button 
-                     onClick={() => { handleSetStage(AppStage.SEARCH); setSelectedReport(null); }}
-                     className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.SEARCH ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
-                     title="Busca"
-                  >
-                      <i className="fas fa-search"></i> {!isSidebarCollapsed && "Busca"}
-                  </button>
+                  <Tooltip text="Pesquisar em todos os relatórios salvos" enabled={appSettings.showTooltips}>
+                      <button 
+                         onClick={() => { handleSetStage(AppStage.SEARCH); setSelectedReport(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.SEARCH ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                      >
+                          <i className="fas fa-search"></i> {!isSidebarCollapsed && "Busca Global"}
+                      </button>
+                  </Tooltip>
 
-                  <button 
-                     onClick={() => { handleSetStage(AppStage.SETTINGS); setSelectedReport(null); }}
-                     className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.SETTINGS ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
-                     title="Configurações"
-                  >
-                      <i className="fas fa-cog"></i> {!isSidebarCollapsed && "Configurações"}
-                  </button>
+                  <Tooltip text="Espaço para sugestões e anotações da equipe" enabled={appSettings.showTooltips}>
+                      <button 
+                         onClick={() => { handleSetStage(AppStage.IDEAS); setSelectedReport(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.IDEAS ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                      >
+                          <i className="fas fa-lightbulb"></i> {!isSidebarCollapsed && "Ideias e Notas"}
+                      </button>
+                  </Tooltip>
+
+                  <Tooltip text="Ajustar preferências do sistema" enabled={appSettings.showTooltips}>
+                      <button 
+                         onClick={() => { handleSetStage(AppStage.SETTINGS); setSelectedReport(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.SETTINGS ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                      >
+                          <i className="fas fa-cog"></i> {!isSidebarCollapsed && "Configurações"}
+                      </button>
+                  </Tooltip>
+
+                  {(user?.role === 'admin' || !user?.role) && (
+                      <Tooltip text="Gerenciar usuários" enabled={appSettings.showTooltips}>
+                          <button 
+                             onClick={() => { handleSetStage(AppStage.MANAGE_USERS); setSelectedReport(null); }}
+                             className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.MANAGE_USERS ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                          >
+                              <i className="fas fa-users-cog"></i> {!isSidebarCollapsed && "Gerenciar Usuários"}
+                          </button>
+                      </Tooltip>
+                  )}
 
                   {!isSidebarCollapsed && Object.keys(groupedReports).map(editalName => (
                       <div key={editalName} className="mt-4">
@@ -847,7 +746,7 @@ const App: React.FC = () => {
                   )}
               </div>
               <button 
-                  onClick={handleLogout}
+                  onClick={handleAppLogout}
                   className="w-full text-xs text-gray-500 hover:text-red-600 flex items-center justify-center gap-2 py-1"
                   title="Sair"
               >
@@ -926,215 +825,50 @@ const App: React.FC = () => {
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
               >
-                  <ReportViewer report={selectedReport} onBack={() => setStage(previousStage)} onGoToDashboard={() => handleSetStage(AppStage.DASHBOARD)} onUpdateReport={handleUpdateReport} />
+                  <ReportViewer report={selectedReport} onBack={() => setStage(previousStage)} onGoToDashboard={() => handleSetStage(AppStage.DASHBOARD)} onUpdateReport={handleUpdateReport} userRole={user?.role} userName={user?.name || user?.displayName || 'Analista'} />
               </motion.div>
           )}
 
           {/* VIEW: DASHBOARD */}
           {stage === AppStage.DASHBOARD && (
-              <motion.div
-                  key="dashboard"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
-                  className="max-w-6xl mx-auto"
-              >
-                  <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6">
-                      {selectedDashboardEdital ? `Visão Geral: ${selectedDashboardEdital}` : 'Visão Geral das Análises'}
-                  </h1>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                      <div className="bg-white dark:bg-gray-800 p-6 rounded shadow-sm border border-gray-200 dark:border-gray-700 transition-colors duration-200">
-                          <span className="text-gray-500 dark:text-gray-400 text-sm font-bold uppercase">Total de Projetos</span>
-                          <div className="text-3xl font-bold text-gray-800 dark:text-gray-100 mt-2">
-                              {selectedDashboardEdital ? (groupedReports[selectedDashboardEdital] || []).length : Object.values(groupedReports).flat().length}
-                          </div>
-                      </div>
-                      <div className="bg-white dark:bg-gray-800 p-6 rounded shadow-sm border border-gray-200 dark:border-gray-700 transition-colors duration-200">
-                          <span className="text-gray-500 dark:text-gray-400 text-sm font-bold uppercase">Editais Ativos</span>
-                          <div className="text-3xl font-bold text-prosas-blue mt-2">
-                              {selectedDashboardEdital ? 1 : Object.keys(groupedReports).length}
-                          </div>
-                      </div>
-                       <div className="bg-white dark:bg-gray-800 p-6 rounded shadow-sm border border-gray-200 dark:border-gray-700 transition-colors duration-200">
-                          <span className="text-gray-500 dark:text-gray-400 text-sm font-bold uppercase">Taxa de Aprovação</span>
-                          <div className="text-3xl font-bold text-green-600 mt-2">
-                              {(() => {
-                                  const all = selectedDashboardEdital ? (groupedReports[selectedDashboardEdital] || []) : Object.values(groupedReports).flat();
-                                  if (!all.length) return '0%';
-                                  const approved = all.filter(r => (r.manualStatus || r.result.overallStatus) === 'APROVADO').length;
-                                  return Math.round((approved / all.length) * 100) + '%';
-                              })()}
-                          </div>
-                      </div>
-                  </div>
-
-                  <h2 className="text-lg font-bold text-gray-700 dark:text-gray-200 mb-4">Análises Recentes</h2>
-                  <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
-                      <table className="w-full text-left text-sm text-gray-600 dark:text-gray-300">
-                          <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700 text-xs uppercase font-bold text-gray-500 dark:text-gray-400 transition-colors duration-200">
-                              <tr>
-                                  <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Organização</th>
-                                  <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Edital</th>
-                                  <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Data</th>
-                                  <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Status</th>
-                                  <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}></th>
-                              </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                              {(selectedDashboardEdital ? (groupedReports[selectedDashboardEdital] || []) : Object.values(groupedReports).flat()).sort((a,b) => b.timestamp - a.timestamp).map(report => (
-                                  <tr key={report.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer" onClick={() => { setSelectedReport(report); handleSetStage(AppStage.REPORT_VIEW); }}>
-                                      <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} font-medium text-gray-800 dark:text-gray-100`}>{report.candidateName}</td>
-                                      <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>{report.editalName}</td>
-                                      <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>{new Date(report.timestamp).toLocaleDateString()}</td>
-                                      <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>
-                                          <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
-                                              (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-                                              (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 
-                                              (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                                          }`}>
-                                              <span className={`w-1.5 h-1.5 rounded-full ${
-                                                  (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-500' :
-                                                  (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-500' : 
-                                                  (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-500' : 'bg-blue-500'
-                                              }`}></span>
-                                              {report.manualStatus || report.result.overallStatus}
-                                          </span>
-                                      </td>
-                                      <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-right space-x-3`}>
-                                          <button 
-                                              onClick={(e) => {
-                                                  e.stopPropagation();
-                                                  setReportToDelete(report);
-                                                  setIsDeleteModalOpen(true);
-                                              }}
-                                              className="text-gray-300 hover:text-red-500 transition-colors"
-                                              title="Excluir Análise"
-                                          >
-                                              <i className="fas fa-trash-alt"></i>
-                                          </button>
-                                          <i className="fas fa-chevron-right text-gray-300"></i>
-                                      </td>
-                                  </tr>
-                              ))}
-                              {(selectedDashboardEdital ? (groupedReports[selectedDashboardEdital] || []) : Object.values(groupedReports).flat()).length === 0 && (
-                                  <tr>
-                                      <td colSpan={5} className="px-6 py-12 text-center text-gray-400 dark:text-gray-500">
-                                          Nenhuma análise encontrada.
-                                      </td>
-                                  </tr>
-                              )}
-                          </tbody>
-                      </table>
-                  </div>
-              </motion.div>
+              <DashboardScreen
+                selectedDashboardEdital={selectedDashboardEdital}
+                groupedReports={groupedReports}
+                appSettings={appSettings}
+                setSelectedReport={setSelectedReport}
+                handleSetStage={handleSetStage}
+                setReportToDelete={setReportToDelete}
+                setIsDeleteModalOpen={setIsDeleteModalOpen}
+              />
           )}
 
           {/* VIEW: SEARCH */}
           {stage === AppStage.SEARCH && (
-              <motion.div
-                  key="search"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
-                  className="max-w-6xl mx-auto"
-              >
-                  <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6">Busca de Análises</h1>
-                  
-                  <div className="bg-white dark:bg-gray-800 p-6 rounded shadow-sm border border-gray-200 dark:border-gray-700 mb-8">
-                      <div className="relative">
-                          <i className="fas fa-search absolute left-4 top-1/2 transform -translate-y-1/2 text-gray-400"></i>
-                          <input 
-                              type="text" 
-                              placeholder="Buscar por nome do projeto, edital ou CNPJ..." 
-                              className="w-full pl-10 pr-4 py-3 rounded border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 text-gray-800 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-prosas-blue transition-all"
-                              value={searchQuery}
-                              onChange={(e) => setSearchQuery(e.target.value)}
-                          />
-                      </div>
-                  </div>
-
-                  {searchQuery.trim() !== '' && (
-                      <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
-                          <table className="w-full text-left text-sm text-gray-600 dark:text-gray-300">
-                              <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700 text-xs uppercase font-bold text-gray-500 dark:text-gray-400 transition-colors duration-200">
-                                  <tr>
-                                      <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Organização</th>
-                                      <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Edital</th>
-                                      <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>CNPJ</th>
-                                      <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Status</th>
-                                      <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}></th>
-                                  </tr>
-                              </thead>
-                              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                                  {allReports.filter(report => {
-                                      const query = searchQuery.toLowerCase();
-                                      return report.candidateName.toLowerCase().includes(query) || 
-                                             report.editalName.toLowerCase().includes(query) || 
-                                             (report.result?.organizationData?.cnpj && report.result.organizationData.cnpj.toLowerCase().includes(query));
-                                  }).map(report => (
-                                      <tr key={report.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer" onClick={() => { setSelectedReport(report); handleSetStage(AppStage.REPORT_VIEW); }}>
-                                          <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} font-medium text-gray-800 dark:text-gray-100`}>{report.candidateName}</td>
-                                          <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>{report.editalName}</td>
-                                          <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>{report.result?.organizationData?.cnpj || '-'}</td>
-                                          <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>
-                                              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
-                                                  (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-                                                  (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 
-                                                  (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
-                                              }`}>
-                                                  <span className={`w-1.5 h-1.5 rounded-full ${
-                                                      (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-500' :
-                                                      (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-500' : 
-                                                      (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-500' : 'bg-blue-500'
-                                                  }`}></span>
-                                                  {report.manualStatus || report.result.overallStatus}
-                                              </span>
-                                          </td>
-                                          <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-right space-x-3`}>
-                                              <button 
-                                                  onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      setReportToDelete(report);
-                                                      setIsDeleteModalOpen(true);
-                                                  }}
-                                                  className="text-gray-300 hover:text-red-500 transition-colors"
-                                                  title="Excluir Análise"
-                                              >
-                                                  <i className="fas fa-trash-alt"></i>
-                                              </button>
-                                              <i className="fas fa-chevron-right text-gray-300"></i>
-                                          </td>
-                                      </tr>
-                                  ))}
-                                  {allReports.filter(report => {
-                                      const query = searchQuery.toLowerCase();
-                                      return report.candidateName.toLowerCase().includes(query) || 
-                                             report.editalName.toLowerCase().includes(query) || 
-                                             (report.result?.organizationData?.cnpj && report.result.organizationData.cnpj.toLowerCase().includes(query));
-                                  }).length === 0 && (
-                                      <tr>
-                                          <td colSpan={5} className="px-6 py-12 text-center text-gray-400 dark:text-gray-500">
-                                              Nenhum resultado encontrado para "{searchQuery}".
-                                          </td>
-                                      </tr>
-                                  )}
-                              </tbody>
-                          </table>
-                      </div>
-                  )}
-                  {searchQuery.trim() === '' && (
-                      <div className="text-center py-12 text-gray-400 dark:text-gray-500">
-                          <i className="fas fa-search text-4xl mb-4 opacity-50"></i>
-                          <p>Digite algo acima para buscar nas análises salvas.</p>
-                      </div>
-                  )}
-              </motion.div>
+              <SearchScreen
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                allReports={allReports}
+                appSettings={appSettings}
+                setSelectedReport={setSelectedReport}
+                handleSetStage={handleSetStage}
+                setReportToDelete={setReportToDelete}
+                setIsDeleteModalOpen={setIsDeleteModalOpen}
+              />
           )}
 
           {/* VIEW: SETTINGS */}
+          {stage === AppStage.IDEAS && (
+              <IdeasScreen
+                ideas={ideas}
+                setIsIdeaModalOpen={setIsIdeaModalOpen}
+                setSelectedIdea={setSelectedIdea}
+              />
+          )}
+
+          {stage === AppStage.MANAGE_USERS && user?.role === 'admin' && (
+              <UserManagementScreen />
+          )}
+
           {stage === AppStage.SETTINGS && (
               <motion.div
                   key="settings"
@@ -1144,102 +878,14 @@ const App: React.FC = () => {
                   transition={{ duration: 0.2 }}
                   className="max-w-4xl mx-auto"
               >
-                  <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100 mb-6">Configurações</h1>
-                  
-                  <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
-                      <div className="p-6 border-b border-gray-100 dark:border-gray-700">
-                          <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4">Aparência</h2>
-                          
-                          <div className="flex items-center justify-between py-3">
-                              <div>
-                                  <h3 className="font-bold text-gray-700 dark:text-gray-200">Modo Escuro</h3>
-                                  <p className="text-sm text-gray-500 dark:text-gray-400">Alterna entre o tema claro e escuro.</p>
-                              </div>
-                              <button 
-                                  onClick={() => setIsDarkMode(!isDarkMode)}
-                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${isDarkMode ? 'bg-prosas-blue' : 'bg-gray-300 dark:bg-gray-600'}`}
-                              >
-                                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${isDarkMode ? 'translate-x-6' : 'translate-x-1'}`} />
-                              </button>
-                          </div>
-
-                          <div className="flex items-center justify-between py-3 border-t border-gray-100 dark:border-gray-700">
-                              <div>
-                                  <h3 className="font-bold text-gray-700 dark:text-gray-200">Texto em Negrito</h3>
-                                  <p className="text-sm text-gray-500 dark:text-gray-400">Aumenta o peso da fonte para melhor legibilidade.</p>
-                              </div>
-                              <button 
-                                  onClick={() => setAppSettings(prev => ({ ...prev, isBoldText: !prev.isBoldText }))}
-                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${appSettings.isBoldText ? 'bg-prosas-blue' : 'bg-gray-300 dark:bg-gray-600'}`}
-                              >
-                                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${appSettings.isBoldText ? 'translate-x-6' : 'translate-x-1'}`} />
-                              </button>
-                          </div>
-
-                          <div className="flex items-center justify-between py-3 border-t border-gray-100 dark:border-gray-700">
-                              <div>
-                                  <h3 className="font-bold text-gray-700 dark:text-gray-200">Layout Moderno</h3>
-                                  <p className="text-sm text-gray-500 dark:text-gray-400">Alterna para um design com maior contraste e bordas arredondadas.</p>
-                              </div>
-                              <button 
-                                  onClick={() => setAppSettings(prev => ({ ...prev, theme: prev.theme === 'modern' ? 'classic' : 'modern' }))}
-                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${appSettings.theme === 'modern' ? 'bg-prosas-blue' : 'bg-gray-300 dark:bg-gray-600'}`}
-                              >
-                                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${appSettings.theme === 'modern' ? 'translate-x-6' : 'translate-x-1'}`} />
-                              </button>
-                          </div>
-                      </div>
-
-                      <div className="p-6">
-                          <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-4">Análise e Desempenho</h2>
-                          
-                          <div className="flex items-center justify-between py-3">
-                              <div className="w-2/3">
-                                  <h3 className="font-bold text-gray-700 dark:text-gray-200">Limite de Projetos Simultâneos</h3>
-                                  <p className="text-sm text-gray-500 dark:text-gray-400">Define quantos projetos podem ser analisados ao mesmo tempo. Valores altos podem causar lentidão.</p>
-                              </div>
-                              <div className="w-1/3 flex justify-end">
-                                  <select 
-                                      value={appSettings.maxConcurrentSlots}
-                                      onChange={(e) => setAppSettings(prev => ({ ...prev, maxConcurrentSlots: Number(e.target.value) }))}
-                                      className="bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 text-sm rounded focus:ring-prosas-blue focus:border-prosas-blue block p-2.5"
-                                  >
-                                      <option value={1}>1 Projeto</option>
-                                      <option value={3}>3 Projetos</option>
-                                      <option value={5}>5 Projetos (Recomendado)</option>
-                                      <option value={10}>10 Projetos</option>
-                                      <option value={20}>20 Projetos (Avançado)</option>
-                                  </select>
-                              </div>
-                          </div>
-
-                          <div className="flex items-center justify-between py-3 border-t border-gray-100 dark:border-gray-700">
-                              <div>
-                                  <h3 className="font-bold text-gray-700 dark:text-gray-200">Auto-Salvar no Drive</h3>
-                                  <p className="text-sm text-gray-500 dark:text-gray-400">Salva automaticamente o contexto da análise no Google Drive.</p>
-                              </div>
-                              <button 
-                                  onClick={() => setAppSettings(prev => ({ ...prev, autoSaveDrive: !prev.autoSaveDrive }))}
-                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${appSettings.autoSaveDrive ? 'bg-prosas-blue' : 'bg-gray-300 dark:bg-gray-600'}`}
-                              >
-                                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${appSettings.autoSaveDrive ? 'translate-x-6' : 'translate-x-1'}`} />
-                              </button>
-                          </div>
-
-                          <div className="flex items-center justify-between py-3 border-t border-gray-100 dark:border-gray-700">
-                              <div>
-                                  <h3 className="font-bold text-gray-700 dark:text-gray-200">Modo Compacto</h3>
-                                  <p className="text-sm text-gray-500 dark:text-gray-400">Reduz o espaçamento da interface para mostrar mais informações na tela.</p>
-                              </div>
-                              <button 
-                                  onClick={() => setAppSettings(prev => ({ ...prev, compactMode: !prev.compactMode }))}
-                                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${appSettings.compactMode ? 'bg-prosas-blue' : 'bg-gray-300 dark:bg-gray-600'}`}
-                              >
-                                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${appSettings.compactMode ? 'translate-x-6' : 'translate-x-1'}`} />
-                              </button>
-                          </div>
-                      </div>
-                  </div>
+                  <SettingsScreen 
+                    isDarkMode={isDarkMode}
+                    setIsDarkMode={setIsDarkMode}
+                    appSettings={appSettings}
+                    setAppSettings={setAppSettings}
+                    user={user}
+                    handleSetStage={handleSetStage}
+                  />
               </motion.div>
           )}
 
@@ -1253,13 +899,29 @@ const App: React.FC = () => {
                    transition={{ duration: 0.2 }}
                    className="max-w-6xl mx-auto pb-10"
                >
-                   <div className="flex items-center gap-4 mb-8">
-                       <button onClick={() => handleSetStage(AppStage.DASHBOARD)} className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-prosas-blue dark:hover:text-prosas-blue transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 shadow-sm hover:shadow">
-                           <i className="fas fa-arrow-left"></i>
-                       </button>
-                       <div>
-                            <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Nova Rodada de Análise</h1>
-                            <p className="text-sm text-gray-500 dark:text-gray-400">Configure o contexto e as regras para esta auditoria.</p>
+                   <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+                       <div className="flex items-center gap-4">
+                           <button onClick={() => handleSetStage(AppStage.DASHBOARD)} className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-prosas-blue dark:hover:text-prosas-blue transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 shadow-sm hover:shadow">
+                               <i className="fas fa-arrow-left"></i>
+                           </button>
+                           <div>
+                                <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-100">Nova Rodada de Análise</h1>
+                                <p className="text-sm text-gray-500 dark:text-gray-400">Configure o contexto e as regras para esta auditoria.</p>
+                           </div>
+                       </div>
+                       <div className="flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-lg border border-gray-200 dark:border-gray-700 self-start sm:self-auto">
+                            <button
+                                onClick={() => setAnalysisMode('IA_COMPLETA')}
+                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${analysisMode === 'IA_COMPLETA' ? 'bg-white dark:bg-gray-700 text-prosas-blue shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                            >
+                                <i className="fas fa-brain mr-2"></i> IA Completa
+                            </button>
+                            <button
+                                onClick={() => setAnalysisMode('IA_OTIMIZADA')}
+                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${analysisMode === 'IA_OTIMIZADA' ? 'bg-white dark:bg-gray-700 text-prosas-blue shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                            >
+                                <i className="fas fa-bolt mr-2"></i> IA Otimizada
+                            </button>
                        </div>
                    </div>
 
@@ -1283,17 +945,28 @@ const App: React.FC = () => {
                                  : 'border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:bg-gray-50 dark:hover:bg-gray-700/50'
                              }`}>
                                 {context.regulationText && (
-                                    <div className="absolute top-3 right-3 text-green-600 dark:text-green-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                    <div className="absolute top-3 right-3 flex items-center gap-2">
+                                        <div className="text-green-600 dark:text-green-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                        <button 
+                                            onClick={() => setContext({...context, regulationText: '', editalTitle: 'Novo Edital'})} 
+                                            className="text-gray-400 hover:text-red-500 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm transition-colors"
+                                            title="Remover arquivo"
+                                        >
+                                            <i className="fas fa-times-circle"></i>
+                                        </button>
+                                    </div>
                                 )}
                                 <i className={`fas fa-book text-4xl mb-4 ${context.regulationText ? 'text-green-500 dark:text-green-400' : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Regulamento (PDF)</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Obrigatório. Contém as regras do edital.</p>
-                                <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                    context.regulationText ? 'bg-white dark:bg-gray-800 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
-                                }`}>
-                                    <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'regulation')} />
-                                    {context.regulationText ? 'Arquivo Carregado' : 'Selecionar'}
-                                </label>
+                                <Tooltip text="Faça o upload do arquivo PDF ou DOCX contendo o regulamento principal do edital" enabled={appSettings.showTooltips} position="top">
+                                  <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.regulationText ? 'bg-white dark:bg-gray-800 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                  }`}>
+                                      <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'regulation')} />
+                                      {context.regulationText ? 'Arquivo Carregado' : 'Selecionar'}
+                                  </label>
+                                </Tooltip>
                              </div>
 
                              {/* Form Template Card */}
@@ -1303,17 +976,28 @@ const App: React.FC = () => {
                                  : 'border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:bg-gray-50 dark:hover:bg-gray-700/50'
                              }`}>
                                 {context.formTemplateText && (
-                                    <div className="absolute top-3 right-3 text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                    <div className="absolute top-3 right-3 flex items-center gap-2">
+                                        <div className="text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                        <button 
+                                            onClick={() => setContext({...context, formTemplateText: ''})} 
+                                            className="text-gray-400 hover:text-red-500 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm transition-colors"
+                                            title="Remover arquivo"
+                                        >
+                                            <i className="fas fa-times-circle"></i>
+                                        </button>
+                                    </div>
                                 )}
                                 <i className={`fas fa-file-alt text-4xl mb-4 ${context.formTemplateText ? 'text-blue-500 dark:text-blue-400' : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Modelo de Formulário</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Estrutura da proposta.</p>
-                                <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                    context.formTemplateText ? 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
-                                }`}>
-                                    <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'form')} />
-                                    {context.formTemplateText ? 'Carregado' : 'Selecionar'}
-                                </label>
+                                <Tooltip text="Opcional. Adicione o modelo visual de formulário do edital se desejar." enabled={appSettings.showTooltips} position="top">
+                                  <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.formTemplateText ? 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                  }`}>
+                                      <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'form')} />
+                                      {context.formTemplateText ? 'Carregado' : 'Selecionar'}
+                                  </label>
+                                </Tooltip>
                              </div>
 
                              {/* Misc Files Card */}
@@ -1323,17 +1007,28 @@ const App: React.FC = () => {
                                  : 'border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:bg-gray-50 dark:hover:bg-gray-700/50'
                              }`}>
                                 {context.miscFilesText && (
-                                    <div className="absolute top-3 right-3 text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                    <div className="absolute top-3 right-3 flex items-center gap-2">
+                                        <div className="text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                        <button 
+                                            onClick={() => setContext({...context, miscFilesText: ''})} 
+                                            className="text-gray-400 hover:text-red-500 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm transition-colors"
+                                            title="Remover arquivo"
+                                        >
+                                            <i className="fas fa-times-circle"></i>
+                                        </button>
+                                    </div>
                                 )}
                                 <i className={`fas fa-paperclip text-4xl mb-4 ${context.miscFilesText ? 'text-blue-500 dark:text-blue-400' : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Outros Anexos</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Manuais ou erratas.</p>
-                                <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                    context.miscFilesText ? 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
-                                }`}>
-                                    <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'misc')} />
-                                    {context.miscFilesText ? 'Carregado' : 'Selecionar'}
-                                </label>
+                                <Tooltip text="Opcional. Inclua erratas, guias, manuais adicionais ou anexos extras relevantes." enabled={appSettings.showTooltips} position="top">
+                                  <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.miscFilesText ? 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                  }`}>
+                                      <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'misc')} />
+                                      {context.miscFilesText ? 'Carregado' : 'Selecionar'}
+                                  </label>
+                                </Tooltip>
                              </div>
                         </div>
                    </div>
@@ -1361,14 +1056,16 @@ const App: React.FC = () => {
                                     />
                                 </div>
                                 {context.regulationText && (
-                                    <button 
-                                        onClick={handleGenerateAuthRules}
-                                        disabled={isGeneratingAuthRules}
-                                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 disabled:opacity-50"
-                                    >
-                                        {isGeneratingAuthRules ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-robot"></i>}
-                                        Gerar com IA
-                                    </button>
+                                    <Tooltip text="Gera regras de qualificação institucional automaticamente a partir do regulamento" enabled={appSettings.showTooltips} position="top">
+                                        <button 
+                                            onClick={handleGenerateAuthRules}
+                                            disabled={isGeneratingAuthRules}
+                                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold transition-colors flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            {isGeneratingAuthRules ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-robot"></i>}
+                                            Gerar com IA
+                                        </button>
+                                    </Tooltip>
                                 )}
                             </div>
                         </div>
@@ -1399,8 +1096,10 @@ const App: React.FC = () => {
                                                         newRules[idx].questionPrefix = e.target.value;
                                                         setContext(prev => ({ ...prev, authRules: newRules }));
                                                     }}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs"
+                                                    disabled={user?.role === 'viewer'}
+                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                                                     placeholder="Ex: 1.1"
+                                                    maxLength={100}
                                                 />
                                             </td>
                                             <td className="py-2 px-2">
@@ -1412,8 +1111,10 @@ const App: React.FC = () => {
                                                         newRules[idx].documentType = e.target.value;
                                                         setContext(prev => ({ ...prev, authRules: newRules }));
                                                     }}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs"
+                                                    disabled={user?.role === 'viewer'}
+                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                                                     placeholder="Ex: Cartao_CNPJ"
+                                                    maxLength={200}
                                                 />
                                                 <datalist id="documentTypes">
                                                     <option value="Cartão CNPJ" />
@@ -1437,9 +1138,11 @@ const App: React.FC = () => {
                                                         newRules[idx].dataToScrape = e.target.value;
                                                         setContext(prev => ({ ...prev, authRules: newRules }));
                                                     }}
+                                                    disabled={user?.role === 'viewer'}
                                                     rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y"
+                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
                                                     placeholder="Ex: Data de Abertura"
+                                                    maxLength={500}
                                                 />
                                             </td>
                                             <td className="py-2 px-2">
@@ -1450,9 +1153,11 @@ const App: React.FC = () => {
                                                         newRules[idx].formatRegex = e.target.value;
                                                         setContext(prev => ({ ...prev, authRules: newRules }));
                                                     }}
+                                                    disabled={user?.role === 'viewer'}
                                                     rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y"
+                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
                                                     placeholder="Ex: DD/MM/AAAA"
+                                                    maxLength={500}
                                                 />
                                             </td>
                                             <td className="py-2 px-2">
@@ -1463,9 +1168,11 @@ const App: React.FC = () => {
                                                         newRules[idx].validationRule = e.target.value;
                                                         setContext(prev => ({ ...prev, authRules: newRules }));
                                                     }}
+                                                    disabled={user?.role === 'viewer'}
                                                     rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y"
+                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
                                                     placeholder="Ex: Data <= Edital - 2 anos"
+                                                    maxLength={1000}
                                                 />
                                             </td>
                                             <td className="py-2 px-2">
@@ -1476,9 +1183,11 @@ const App: React.FC = () => {
                                                         newRules[idx].approvalTrigger = e.target.value;
                                                         setContext(prev => ({ ...prev, authRules: newRules }));
                                                     }}
+                                                    disabled={user?.role === 'viewer'}
                                                     rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y"
+                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
                                                     placeholder="Ex: CNPJ > 2 anos"
+                                                    maxLength={500}
                                                 />
                                             </td>
                                             <td className="py-2 px-2">
@@ -1489,68 +1198,76 @@ const App: React.FC = () => {
                                                         newRules[idx].rejectionTrigger = e.target.value;
                                                         setContext(prev => ({ ...prev, authRules: newRules }));
                                                     }}
+                                                    disabled={user?.role === 'viewer'}
                                                     rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y"
+                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
                                                     placeholder="Ex: Reprovado: Tempo inferior a 2 anos"
+                                                    maxLength={500}
                                                 />
                                             </td>
                                             <td className="py-2 px-2 text-center">
-                                                <button 
-                                                    onClick={() => {
-                                                        const newRules = context.authRules.filter(r => r.id !== rule.id);
-                                                        setContext(prev => ({ ...prev, authRules: newRules }));
-                                                    }}
-                                                    className="text-red-500 hover:text-red-700 p-1"
-                                                    title="Remover regra"
-                                                >
-                                                    <i className="fas fa-trash"></i>
-                                                </button>
+                                                {user?.role !== 'viewer' && (
+                                                    <button 
+                                                        onClick={() => {
+                                                            const newRules = context.authRules.filter(r => r.id !== rule.id);
+                                                            setContext(prev => ({ ...prev, authRules: newRules }));
+                                                        }}
+                                                        className="text-red-500 hover:text-red-700 p-1"
+                                                        title="Remover regra"
+                                                    >
+                                                        <i className="fas fa-trash"></i>
+                                                    </button>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
                             <div className="flex gap-4 mt-4">
-                                <button 
-                                    onClick={() => {
-                                        setContext(prev => ({
-                                            ...prev, 
-                                            authRules: [...prev.authRules, { 
-                                                id: Math.random().toString(36).substring(7), 
-                                                questionPrefix: '',
-                                                documentType: 'Cartão CNPJ', 
-                                                dataToScrape: 'Data de Emissão',
-                                                formatRegex: 'Emitido no dia\\\\s*(\\\\d{2}/\\\\d{2}/\\\\d{4})',
-                                                validationRule: 'isWithinThreeMonths(value, referenceDate)',
-                                                approvalTrigger: 'CNPJ Ativo e dentro do prazo.',
-                                                rejectionTrigger: 'CNPJ irregular ou vencido.'
-                                            }]
-                                        }));
-                                    }}
-                                    className="text-sm text-blue-600 dark:text-blue-400 font-bold hover:underline flex items-center gap-2"
-                                >
-                                    <i className="fas fa-plus"></i> Adicionar Cartão CNPJ (Padrão)
-                                </button>
-                                <button 
-                                    onClick={() => {
-                                        setContext(prev => ({
-                                            ...prev, 
-                                            authRules: [...prev.authRules, { 
-                                                id: Math.random().toString(36).substring(7), 
-                                                questionPrefix: '',
-                                                documentType: '', 
-                                                dataToScrape: '',
-                                                formatRegex: '',
-                                                validationRule: '',
-                                                approvalTrigger: '',
-                                                rejectionTrigger: ''
-                                            }]
-                                        }));
-                                    }}
-                                    className="text-sm text-gray-500 hover:underline flex items-center gap-2"
-                                >
-                                    <i className="fas fa-plus"></i> Outra Regra
-                                </button>
+                                <Tooltip text="Adiciona uma nova regra modelo para validar Cartão CNPJ e sua data de emissão" enabled={appSettings.showTooltips} position="top">
+                                    <button 
+                                        onClick={() => {
+                                            setContext(prev => ({
+                                                ...prev, 
+                                                authRules: [...prev.authRules, { 
+                                                    id: Math.random().toString(36).substring(7), 
+                                                    questionPrefix: '',
+                                                    documentType: 'Cartão CNPJ', 
+                                                    dataToScrape: 'Data de Emissão',
+                                                    formatRegex: 'Emitido no dia\\\\s*(\\\\d{2}/\\\\d{2}/\\\\d{4})',
+                                                    validationRule: 'isWithinThreeMonths(value, referenceDate)',
+                                                    approvalTrigger: 'CNPJ Ativo e dentro do prazo.',
+                                                    rejectionTrigger: 'CNPJ irregular ou vencido.'
+                                                }]
+                                            }));
+                                        }}
+                                        className="text-sm text-blue-600 dark:text-blue-400 font-bold hover:underline flex items-center gap-2"
+                                    >
+                                        <i className="fas fa-plus"></i> Adicionar Cartão CNPJ (Padrão)
+                                    </button>
+                                </Tooltip>
+                                <Tooltip text="Cria uma linha em branco para criar uma regra customizada" enabled={appSettings.showTooltips} position="top">
+                                    <button 
+                                        onClick={() => {
+                                            setContext(prev => ({
+                                                ...prev, 
+                                                authRules: [...prev.authRules, { 
+                                                    id: Math.random().toString(36).substring(7), 
+                                                    questionPrefix: '',
+                                                    documentType: '', 
+                                                    dataToScrape: '',
+                                                    formatRegex: '',
+                                                    validationRule: '',
+                                                    approvalTrigger: '',
+                                                    rejectionTrigger: ''
+                                                }]
+                                            }));
+                                        }}
+                                        className="text-sm text-gray-500 hover:underline flex items-center gap-2"
+                                    >
+                                        <i className="fas fa-plus"></i> Outra Regra
+                                    </button>
+                                </Tooltip>
                             </div>
                         </div>
                    </div>
@@ -1569,17 +1286,19 @@ const App: React.FC = () => {
                             </div>
                             {context.regulationText && (
                                 <div className="relative">
-                                    <button
-                                        onClick={() => setIsPromptMenuOpen(!isPromptMenuOpen)}
-                                        disabled={isGeneratingCriteria}
-                                        className="bg-prosas-blue hover:bg-prosas-blueDark text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                                    >
-                                        {isGeneratingCriteria ? (
-                                            <><i className="fas fa-circle-notch fa-spin"></i> Gerando...</>
-                                        ) : (
-                                            <><i className="fas fa-robot"></i> Gerar com IA do Regulamento <i className={`fas fa-chevron-${isPromptMenuOpen ? 'up' : 'down'} ml-1 text-xs`}></i></>
-                                        )}
-                                    </button>
+                                    <Tooltip text="Utilize a IA para ler o regulamento e extrair todas as regras e critérios automaticamente" enabled={appSettings.showTooltips} position="top">
+                                      <button
+                                          onClick={() => setIsPromptMenuOpen(!isPromptMenuOpen)}
+                                          disabled={isGeneratingCriteria}
+                                          className="bg-prosas-blue hover:bg-prosas-blueDark text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                                      >
+                                          {isGeneratingCriteria ? (
+                                              <><i className="fas fa-circle-notch fa-spin"></i> Gerando...</>
+                                          ) : (
+                                              <><i className="fas fa-robot"></i> Gerar com IA do Regulamento <i className={`fas fa-chevron-${isPromptMenuOpen ? 'up' : 'down'} ml-1 text-xs`}></i></>
+                                          )}
+                                      </button>
+                                    </Tooltip>
                                     
                                     <AnimatePresence>
                                         {isPromptMenuOpen && !isGeneratingCriteria && (
@@ -1640,6 +1359,7 @@ const App: React.FC = () => {
                                 value={context.criteriaText}
                                 onChange={(e) => setContext({...context, criteriaText: e.target.value})}
                                 spellCheck={false}
+                                maxLength={50000}
                             />
                             <div className="absolute bottom-4 right-4 text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
                                 {context.criteriaText.length} caracteres
@@ -1657,19 +1377,21 @@ const App: React.FC = () => {
                                 <span className="font-bold text-red-500">Aguardando Regulamento</span>
                             )}
                         </div>
-                        <button 
-                            onClick={() => {
-                                // Se não houver candidatos, adiciona o primeiro automaticamente
-                                if (candidates.length === 0) addNewSlot();
-                                handleSetStage(AppStage.ANALYSIS_RUN);
-                            }}
-                            disabled={!context.regulationText}
-                            className={`font-bold py-3 px-8 rounded shadow hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center gap-2 uppercase tracking-wide text-sm disabled:opacity-50 disabled:transform-none disabled:cursor-not-allowed ${
-                                !context.regulationText ? 'bg-gray-300 text-gray-500' : 'bg-prosas-blue hover:bg-prosas-blueDark text-white'
-                            }`}
-                        >
-                            Ir para Análise <i className="fas fa-arrow-right"></i>
-                        </button>
+                        <Tooltip text="Prosseguir para a execução da análise com os documentos dos candidatos" enabled={appSettings.showTooltips} position="top">
+                          <button 
+                              onClick={() => {
+                                  // Se não houver candidatos, adiciona o primeiro automaticamente
+                                  if (candidates.length === 0) addNewSlot();
+                                  handleSetStage(AppStage.ANALYSIS_RUN);
+                              }}
+                              disabled={!context.regulationText}
+                              className={`font-bold py-3 px-8 rounded shadow hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center gap-2 uppercase tracking-wide text-sm disabled:opacity-50 disabled:transform-none disabled:cursor-not-allowed ${
+                                  !context.regulationText ? 'bg-gray-300 text-gray-500' : 'bg-prosas-blue hover:bg-prosas-blueDark text-white'
+                              }`}
+                          >
+                              Ir para Análise <i className="fas fa-arrow-right"></i>
+                          </button>
+                        </Tooltip>
                    </div>
 
                    {/* System Prompt Viewer (Guardrail) */}
@@ -1738,15 +1460,17 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                            </div>
                        </div>
                        
-                       <button 
-                         onClick={addNewSlot}
-                         disabled={candidates.length >= appSettings.maxConcurrentSlots}
-                         className={`px-4 py-2 rounded font-bold text-sm flex items-center gap-2 transition-all duration-200 transform active:scale-95 disabled:opacity-50 disabled:transform-none disabled:cursor-not-allowed ${
-                             candidates.length >= appSettings.maxConcurrentSlots ? 'bg-gray-200 text-gray-400' : 'bg-prosas-blue text-white hover:bg-prosas-blueDark shadow-sm hover:shadow-md hover:-translate-y-0.5'
-                         }`}
-                       >
-                           <i className="fas fa-plus"></i> Adicionar Candidato
-                       </button>
+                       <Tooltip text="Adiciona um novo slot vazio para analisar os documentos de outro candidato" enabled={appSettings.showTooltips} position="top">
+                         <button 
+                           onClick={addNewSlot}
+                           disabled={candidates.length >= appSettings.maxConcurrentSlots}
+                           className={`px-4 py-2 rounded font-bold text-sm flex items-center gap-2 transition-all duration-200 transform active:scale-95 disabled:opacity-50 disabled:transform-none disabled:cursor-not-allowed ${
+                               candidates.length >= appSettings.maxConcurrentSlots ? 'bg-gray-200 text-gray-400' : 'bg-prosas-blue text-white hover:bg-prosas-blueDark shadow-sm hover:shadow-md hover:-translate-y-0.5'
+                           }`}
+                         >
+                             <i className="fas fa-plus"></i> Adicionar Candidato
+                         </button>
+                       </Tooltip>
                    </div>
 
                    {/* Dynamic Grid */}
@@ -1784,6 +1508,155 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                </motion.div>
           )}
           </AnimatePresence>
+          {/* MODAL: NOVA IDEIA */}
+          <AnimatePresence>
+              {isIdeaModalOpen && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                      <motion.div 
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-lg w-full overflow-hidden"
+                      >
+                          <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                              <h2 className="text-xl font-bold text-gray-800 dark:text-white">Registrar Nova Ideia</h2>
+                              <button onClick={() => setIsIdeaModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                  <i className="fas fa-times"></i>
+                              </button>
+                          </div>
+                          <div className="p-6 space-y-4">
+                              <div>
+                                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Título da Ideia</label>
+                                  <input 
+                                      type="text"
+                                      value={newIdea.title}
+                                      onChange={(e) => setNewIdea(prev => ({ ...prev, title: e.target.value }))}
+                                      placeholder="Ex: Melhoria no sistema de filtros"
+                                      className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-prosas-blue outline-none text-gray-800 dark:text-white"
+                                      maxLength={200}
+                                  />
+                              </div>
+                              <div>
+                                  <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Descrição Detalhada</label>
+                                  <textarea 
+                                      value={newIdea.description}
+                                      onChange={(e) => setNewIdea(prev => ({ ...prev, description: e.target.value }))}
+                                      placeholder="Descreva sua sugestão aqui..."
+                                      rows={5}
+                                      className="w-full bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-3 text-sm focus:ring-2 focus:ring-prosas-blue outline-none text-gray-800 dark:text-white resize-none"
+                                      maxLength={5000}
+                                  />
+                              </div>
+                          </div>
+                          <div className="p-6 bg-gray-50 dark:bg-gray-800/50 flex justify-end gap-3">
+                              <button 
+                                  onClick={() => setIsIdeaModalOpen(false)}
+                                  className="px-4 py-2 text-sm font-bold text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                              >
+                                  Cancelar
+                              </button>
+                              <button 
+                                  onClick={handleSaveIdea}
+                                  className="bg-prosas-blue text-white px-6 py-2 rounded-lg font-bold shadow-sm hover:bg-prosas-blueDark transition-all"
+                              >
+                                  Salvar Ideia
+                              </button>
+                          </div>
+                      </motion.div>
+                  </div>
+              )}
+          </AnimatePresence>
+
+          {/* MODAL: DETALHES DA IDEIA E COMENTÁRIOS */}
+          <AnimatePresence>
+              {selectedIdea && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                      <motion.div 
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden"
+                      >
+                          <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                              <div className="flex items-center gap-3">
+                                  <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 text-prosas-blue flex items-center justify-center text-lg font-bold">
+                                      {selectedIdea.userName.charAt(0).toUpperCase()}
+                                  </div>
+                                  <div>
+                                      <h2 className="text-xl font-bold text-gray-800 dark:text-white">{selectedIdea.title}</h2>
+                                      <p className="text-xs text-gray-500 dark:text-gray-400">Postado por {selectedIdea.userName} em {new Date(selectedIdea.timestamp).toLocaleString()}</p>
+                                  </div>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                  {user?.uid === selectedIdea.userId && (
+                                      <button 
+                                          onClick={() => handleDeleteIdea(selectedIdea.id)}
+                                          className="text-red-400 hover:text-red-600 p-2 transition-colors"
+                                          title="Excluir Ideia"
+                                      >
+                                          <i className="fas fa-trash-alt"></i>
+                                      </button>
+                                  )}
+                                  <button onClick={() => setSelectedIdea(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-2">
+                                      <i className="fas fa-times"></i>
+                                  </button>
+                              </div>
+                          </div>
+                          
+                          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                              <div className="mb-8">
+                                  <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">{selectedIdea.description}</p>
+                              </div>
+
+                              <div className="space-y-6">
+                                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider flex items-center gap-2">
+                                      <i className="far fa-comments"></i> Comentários ({ideaComments[selectedIdea.id]?.length || 0})
+                                  </h3>
+                                  
+                                  <div className="space-y-4">
+                                      {ideaComments[selectedIdea.id]?.map(comment => (
+                                          <div key={comment.id} className="flex gap-3">
+                                              <div className="w-8 h-8 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-xs font-bold text-gray-500 dark:text-gray-400 flex-shrink-0">
+                                                  {comment.userName.charAt(0).toUpperCase()}
+                                              </div>
+                                              <div className="bg-gray-50 dark:bg-gray-900/50 p-3 rounded-lg flex-1 border border-gray-100 dark:border-gray-700">
+                                                  <div className="flex justify-between items-center mb-1">
+                                                      <span className="text-xs font-bold text-gray-700 dark:text-gray-300">{comment.userName}</span>
+                                                      <span className="text-[10px] text-gray-400">{new Date(comment.timestamp).toLocaleString()}</span>
+                                                  </div>
+                                                  <p className="text-sm text-gray-600 dark:text-gray-400">{comment.text}</p>
+                                              </div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              </div>
+                          </div>
+
+                          <div className="p-6 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                              <div className="flex gap-3">
+                                  <input 
+                                      type="text"
+                                      value={newComment}
+                                      onChange={(e) => setNewComment(e.target.value)}
+                                      onKeyPress={(e) => e.key === 'Enter' && handleSaveComment(selectedIdea.id)}
+                                      placeholder="Escreva um comentário..."
+                                      className="flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-prosas-blue outline-none text-gray-800 dark:text-white"
+                                      maxLength={2000}
+                                  />
+                                  <button 
+                                      onClick={() => handleSaveComment(selectedIdea.id)}
+                                      disabled={!newComment.trim()}
+                                      className="bg-prosas-blue text-white px-4 py-2 rounded-lg font-bold shadow-sm hover:bg-prosas-blueDark transition-all disabled:opacity-50"
+                                  >
+                                      Enviar
+                                  </button>
+                              </div>
+                          </div>
+                      </motion.div>
+                  </div>
+              )}
+          </AnimatePresence>
+
           {/* MODAL DE CONFIRMAÇÃO DE EXCLUSÃO */}
           <AnimatePresence>
               {isDeleteModalOpen && (
@@ -1805,13 +1678,13 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                           </div>
                           <div className="bg-gray-50 dark:bg-gray-700/50 p-4 flex gap-3">
                               <button 
-                                  onClick={() => { setIsDeleteModalOpen(false); setReportToDelete(null); }}
+                                  onClick={(e) => { e.stopPropagation(); setIsDeleteModalOpen(false); setReportToDelete(null); }}
                                   className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-bold hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
                               >
                                   Cancelar
                               </button>
                               <button 
-                                  onClick={handleConfirmDelete}
+                                  onClick={(e) => { e.stopPropagation(); handleConfirmDelete(); }}
                                   className="flex-1 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white font-bold shadow-sm transition-colors"
                               >
                                   Excluir

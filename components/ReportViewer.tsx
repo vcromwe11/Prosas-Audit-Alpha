@@ -1,13 +1,17 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { SavedReport, AnalysisPoint } from '../types';
 import html2pdf from 'html2pdf.js';
+import { getPrompt } from '../services/storageService';
 
-interface Props {
+export interface Props {
   report: SavedReport;
   onBack: () => void;
   onGoToDashboard: () => void;
   onUpdateReport?: (updatedReport: SavedReport) => void;
+  userRole?: 'admin' | 'analyst' | 'viewer';
+  userName?: string;
+  isDemoMode?: boolean;
 }
 
 const StatusIcon = ({ status }: { status: string }) => {
@@ -78,7 +82,7 @@ const AccordionItem: React.FC<{ point: AnalysisPoint, forceOpen?: boolean }> = (
   );
 };
 
-const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpdateReport }) => {
+const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpdateReport, userRole, userName, isDemoMode }) => {
   const { result } = report;
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isManualEvalOpen, setIsManualEvalOpen] = useState(false);
@@ -86,19 +90,61 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
   const [isEditingEval, setIsEditingEval] = useState(!report.manualStatus && !report.userNotes);
   const [draftStatus, setDraftStatus] = useState(report.manualStatus || '');
   const [draftNotes, setDraftNotes] = useState(report.userNotes || '');
+  const [promptText, setPromptText] = useState<string | null>(null);
+  const [isLoadingPrompt, setIsLoadingPrompt] = useState(false);
 
-  React.useEffect(() => {
+  if (!result || typeof result !== 'object' || !result.organizationData) {
+    return (
+      <div className="p-8 text-center text-red-500 bg-white rounded-lg shadow-sm border border-red-200 max-w-2xl mx-auto mt-10">
+        <i className="fas fa-exclamation-triangle text-4xl mb-4 text-red-400"></i>
+        <h2 className="text-xl font-bold text-gray-800">Relatório Corrompido ou Incompleto</h2>
+        <p className="mt-2 text-gray-600 text-sm">Houve um erro ao processar ou salvar esta análise (possivelmente devido a uma falha na IA ou timeout). Os dados esperados não estão presentes.</p>
+        <div className="mt-6 flex justify-center gap-4">
+          <button onClick={onBack} className="px-4 py-2 bg-gray-100 text-gray-700 font-bold rounded hover:bg-gray-200 transition-colors">
+            <i className="fas fa-arrow-left mr-2"></i> Voltar
+          </button>
+          {onGoToDashboard && (
+            <button onClick={onGoToDashboard} className="px-4 py-2 bg-prosas-blue text-white font-bold rounded hover:bg-prosas-blueDark transition-colors">
+              Ir para Dashboard
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  useEffect(() => {
     setDraftStatus(report.manualStatus || '');
     setDraftNotes(report.userNotes || '');
-    setIsEditingEval(!report.manualStatus && !report.userNotes);
-  }, [report.id, report.manualStatus, report.userNotes]);
+    setIsEditingEval((!report.manualStatus && !report.userNotes) && userRole !== 'viewer');
+  }, [report.id, report.manualStatus, report.userNotes, userRole]);
+
+  useEffect(() => {
+    const fetchPrompt = async () => {
+      if (report.promptId) {
+        setIsLoadingPrompt(true);
+        const prompt = await getPrompt(report.promptId);
+        if (prompt) {
+          setPromptText(prompt.text);
+        } else {
+          setPromptText(null);
+        }
+        setIsLoadingPrompt(false);
+      } else {
+        setPromptText(null);
+      }
+    };
+    fetchPrompt();
+  }, [report.promptId]);
 
   const handleSaveEval = () => {
     if (onUpdateReport) {
       onUpdateReport({
         ...report,
         manualStatus: draftStatus as any,
-        userNotes: draftNotes
+        userNotes: draftNotes,
+        evaluatedBy: userName || 'Usuário Desconhecido',
+        evaluatedAt: Date.now()
       });
       setIsEditingEval(false);
     }
@@ -109,7 +155,9 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
       onUpdateReport({
         ...report,
         manualStatus: null as any,
-        userNotes: null as any
+        userNotes: null as any,
+        evaluatedBy: null as any,
+        evaluatedAt: null as any
       });
       setDraftStatus('');
       setDraftNotes('');
@@ -155,83 +203,92 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
   };
 
   return (
-    <div id="report-content" className="animate-fade-in max-w-5xl mx-auto pb-10 print:pb-0 print:max-w-none print:w-full">
-      {/* Header Actions */}
-      <div className="mb-6 flex flex-col sm:flex-row justify-end items-center gap-4 print:hidden" data-html2canvas-ignore>
-        <div className="flex gap-2">
-           <button 
-             onClick={handleExportJSON}
-             className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-300 text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2 shadow-sm hover:shadow transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200"
-           >
-             <i className="fas fa-file-code"></i> JSON
-           </button>
-           <button 
-             onClick={handlePrint}
-             disabled={isGeneratingPdf}
-             className="px-4 py-2 bg-prosas-blue text-white rounded text-xs font-bold hover:bg-prosas-blueDark flex items-center gap-2 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:transform-none"
-           >
-             {isGeneratingPdf ? (
-               <><i className="fas fa-spinner fa-spin"></i> Preparando PDF...</>
-             ) : (
-               <><i className="fas fa-print"></i> Imprimir / PDF</>
-             )}
-           </button>
-        </div>
-      </div>
-
-      {/* Main Header Card */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6 print:shadow-none print:border-none print:p-0">
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-gray-500 text-xl print:border print:border-gray-300">
-              <i className="fas fa-building"></i>
+    <div id="report-content" className={`animate-fade-in mx-auto pb-10 print:pb-0 print:max-w-none print:w-full ${isDemoMode ? 'w-full' : 'max-w-5xl'}`}>
+      {!isDemoMode && (
+        <>
+          {/* Header Actions */}
+          <div className="mb-6 flex flex-col sm:flex-row justify-between items-center gap-4 print:hidden" data-html2canvas-ignore>
+            <div className="flex gap-2">
+                <button className="px-4 py-2 bg-yellow-500 text-white rounded text-xs font-bold hover:bg-yellow-600 flex items-center gap-2 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200">
+                    <i className="fas fa-sync-alt"></i> Refazer Análise
+                </button>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">{result.candidateName}</h1>
-              <div className="flex items-center gap-3 text-sm text-gray-500 mt-1">
-                <span>{result.organizationData.cnpj}</span>
-                <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
-                <span>{report.editalName}</span>
+            <div className="flex gap-2">
+               <button 
+                 onClick={handleExportJSON}
+                 className="px-3 py-2 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-300 text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-700 flex items-center gap-2 shadow-sm hover:shadow transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200"
+               >
+                 <i className="fas fa-file-code"></i> JSON
+               </button>
+               <button 
+                 onClick={handlePrint}
+                 disabled={isGeneratingPdf}
+                 className="px-4 py-2 bg-prosas-blue text-white rounded text-xs font-bold hover:bg-prosas-blueDark flex items-center gap-2 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 disabled:opacity-50 disabled:transform-none"
+               >
+                 {isGeneratingPdf ? (
+                   <><i className="fas fa-spinner fa-spin"></i> Preparando PDF...</>
+                 ) : (
+                   <><i className="fas fa-print"></i> Imprimir / PDF</>
+                 )}
+               </button>
+            </div>
+          </div>
+
+          {/* Main Header Card */}
+          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6 print:shadow-none print:border-none print:p-0">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center text-gray-500 text-xl print:border print:border-gray-300">
+                  <i className="fas fa-building"></i>
+                </div>
+                <div>
+                  <h1 className="text-2xl font-bold text-gray-900">{result.candidateName}</h1>
+                  <div className="flex items-center gap-3 text-sm text-gray-500 mt-1">
+                    <span>{result.organizationData.cnpj}</span>
+                    <span className="w-1 h-1 bg-gray-300 rounded-full"></span>
+                    <span>{report.editalName}</span>
+                  </div>
+                </div>
+              </div>
+              
+              <div className={`px-4 py-2 rounded-full border flex items-center gap-2 ${
+                 (report.manualStatus || result.overallStatus) === 'APROVADO' ? 'bg-green-50 border-green-200 text-green-700' :
+                 (report.manualStatus || result.overallStatus) === 'REPROVADO' ? 'bg-red-50 border-red-200 text-red-700' : 
+                 (report.manualStatus || result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-blue-50 border-blue-200 text-blue-700'
+              } print:bg-white print:border-black print:text-black`}>
+                 <i className={`fas ${
+                     (report.manualStatus || result.overallStatus) === 'APROVADO' ? 'fa-check' : 
+                     (report.manualStatus || result.overallStatus) === 'REPROVADO' ? 'fa-times' : 
+                     (report.manualStatus || result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'fa-exclamation-triangle' : 'fa-clock'
+                 }`}></i>
+                 <span className="font-bold tracking-wide">{report.manualStatus || result.overallStatus}</span>
               </div>
             </div>
-          </div>
-          
-          <div className={`px-4 py-2 rounded-full border flex items-center gap-2 ${
-             (report.manualStatus || result.overallStatus) === 'APROVADO' ? 'bg-green-50 border-green-200 text-green-700' :
-             (report.manualStatus || result.overallStatus) === 'REPROVADO' ? 'bg-red-50 border-red-200 text-red-700' : 
-             (report.manualStatus || result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-50 border-yellow-200 text-yellow-700' : 'bg-blue-50 border-blue-200 text-blue-700'
-          } print:bg-white print:border-black print:text-black`}>
-             <i className={`fas ${
-                 (report.manualStatus || result.overallStatus) === 'APROVADO' ? 'fa-check' : 
-                 (report.manualStatus || result.overallStatus) === 'REPROVADO' ? 'fa-times' : 
-                 (report.manualStatus || result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'fa-exclamation-triangle' : 'fa-clock'
-             }`}></i>
-             <span className="font-bold tracking-wide">{report.manualStatus || result.overallStatus}</span>
-          </div>
-        </div>
 
-        {/* Info Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-8 pt-6 border-t border-gray-100 print:grid-cols-2 print:gap-4">
-           <div>
-              <span className="block text-xs text-gray-400 uppercase font-bold mb-1">Fundação</span>
-              <span className="text-gray-800 font-medium">{result.organizationData.foundationDate || '-'}</span>
-           </div>
-           <div>
-              <span className="block text-xs text-gray-400 uppercase font-bold mb-1">Natureza Jurídica</span>
-              <span className="text-gray-800 font-medium">{result.organizationData.legalStatus}</span>
-           </div>
-           <div className="md:col-span-2">
-              <span className="block text-xs text-gray-400 uppercase font-bold mb-1">Representante Legal</span>
-              <span className="text-gray-800 font-medium">{result.organizationData.representativeName || '-'}</span>
-           </div>
-        </div>
+            {/* Info Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-8 pt-6 border-t border-gray-100 print:grid-cols-2 print:gap-4">
+               <div>
+                  <span className="block text-xs text-gray-400 uppercase font-bold mb-1">Fundação</span>
+                  <span className="text-gray-800 font-medium">{result.organizationData.foundationDate || '-'}</span>
+               </div>
+               <div>
+                  <span className="block text-xs text-gray-400 uppercase font-bold mb-1">Natureza Jurídica</span>
+                  <span className="text-gray-800 font-medium">{result.organizationData.legalStatus}</span>
+               </div>
+               <div className="md:col-span-2">
+                  <span className="block text-xs text-gray-400 uppercase font-bold mb-1">Representante Legal</span>
+                  <span className="text-gray-800 font-medium">{result.organizationData.representativeName || '-'}</span>
+               </div>
+            </div>
 
-        {/* Summary Box */}
-        <div className="mt-6 bg-gray-50 p-4 rounded border border-gray-200 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap print:bg-white print:border-gray-300">
-           <span className="font-bold text-gray-900 block mb-1">Resumo da Análise:</span>
-           {result.summary}
-        </div>
-      </div>
+            {/* Summary Box */}
+            <div className="mt-6 bg-gray-50 p-4 rounded border border-gray-200 text-sm text-gray-700 leading-relaxed whitespace-pre-wrap print:bg-white print:border-gray-300">
+               <span className="font-bold text-gray-900 block mb-1">Resumo da Análise:</span>
+               {result.summary}
+            </div>
+          </div>
+        </>
+      )}
 
       {/* Manual Evaluation Card */}
       <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-6 print:shadow-none print:border-none print:p-0 overflow-hidden">
@@ -250,7 +307,7 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
 
         {(isManualEvalOpen || true) && ( // We will use CSS to hide it when not open, but keep it in DOM for print
           <div className={`px-6 pb-6 pt-2 border-t border-gray-100 dark:border-gray-700 print:border-none print:block ${isManualEvalOpen ? 'block' : 'hidden'}`}>
-            {isEditingEval ? (
+            {(isEditingEval && userRole !== 'viewer') ? (
               <div className="space-y-4 print:hidden">
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="md:col-span-1">
@@ -300,6 +357,7 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
               </div>
             ) : (
               <div className="bg-gray-50 dark:bg-gray-700/30 p-4 rounded border border-gray-200 dark:border-gray-700 relative group">
+                {userRole !== 'viewer' && (
                 <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity print:hidden">
                   <button 
                     onClick={() => setIsEditingEval(true)}
@@ -316,6 +374,7 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
                     <i className="fas fa-trash text-xs"></i>
                   </button>
                 </div>
+                )}
                 
                 <div className="mb-3">
                   <span className="text-xs text-gray-500 dark:text-gray-400 font-bold uppercase mr-2">Sugestão de Parecer:</span>
@@ -338,6 +397,17 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
                     {report.userNotes || <span className="italic text-gray-400">Nenhuma justificativa informada.</span>}
                   </p>
                 </div>
+                
+                {report.evaluatedBy && (
+                <div className="mt-3 pt-3 border-t border-gray-200 dark:border-gray-600 flex items-center gap-2">
+                    <div className="w-5 h-5 rounded-full bg-prosas-blue flex items-center justify-center text-[10px] text-white font-bold">
+                        {report.evaluatedBy.charAt(0).toUpperCase()}
+                    </div>
+                    <span className="text-xs text-gray-500 dark:text-gray-400">
+                      Auditado por <strong>{report.evaluatedBy}</strong> em {report.evaluatedAt ? new Date(report.evaluatedAt).toLocaleString() : 'data desconhecida'}
+                    </span>
+                </div>
+                )}
               </div>
             )}
           </div>
@@ -356,6 +426,30 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
             {result.points.map((point, idx) => (
               <AccordionItem key={idx} point={point} forceOpen={isGeneratingPdf} />
             ))}
+         </div>
+      </div>
+
+      {/* Prompt Display */}
+      <div className="mt-6 bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden print:shadow-none print:border-none">
+         <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 flex justify-between items-center print:bg-white print:border-b-2 print:border-gray-800 print:px-0">
+            <h3 className="font-bold text-gray-800 flex items-center gap-2">
+              <i className="fas fa-terminal text-gray-500"></i> Prompt Utilizado na Análise
+            </h3>
+         </div>
+         <div className="p-6">
+            {isLoadingPrompt ? (
+              <div className="text-sm text-gray-500 italic flex items-center gap-2">
+                <i className="fas fa-spinner fa-spin"></i> Carregando prompt...
+              </div>
+            ) : promptText ? (
+              <pre className="text-xs text-gray-600 bg-gray-50 p-4 rounded border border-gray-200 overflow-x-auto whitespace-pre-wrap font-mono">
+                {promptText}
+              </pre>
+            ) : (
+              <div className="text-sm text-gray-500 italic bg-gray-50 p-4 rounded border border-gray-200">
+                A função de visualização do prompt não está disponível para esta análise ou o prompt não pôde ser recuperado.
+              </div>
+            )}
          </div>
       </div>
 

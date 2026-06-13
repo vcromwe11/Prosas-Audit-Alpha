@@ -1,5 +1,20 @@
 import JSZip from 'jszip';
 
+// Add batch processing helper
+async function processInBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  processor: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map((item) => processor(item)));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
 /**
  * Extracts all PDF files from a ZIP archive, including those in subdirectories.
  * Returns a flat array of File objects.
@@ -10,31 +25,26 @@ export const extractPdfsFromZip = async (zipFile: File): Promise<File[]> => {
         const content = await zip.loadAsync(zipFile);
         const extractedFiles: File[] = [];
 
-        // Iterate through every file in the zip
-        // object contains the relative path (e.g., "folder/subfolder/file.pdf")
-        const promises: Promise<void>[] = [];
+        // Iterable list of files
+        const fileEntries: JSZip.JSZipObject[] = [];
 
         content.forEach((relativePath, zipEntry) => {
-            // Skip directories and hidden files (like __MACOSX)
             if (zipEntry.dir || zipEntry.name.startsWith('__MACOSX') || zipEntry.name.startsWith('.')) {
                 return;
             }
-
-            // Check if it is a PDF
             if (zipEntry.name.toLowerCase().endsWith('.pdf')) {
-                const promise = async () => {
-                    const blob = await zipEntry.async('blob');
-                    // Create a new File object. We replace slashes with underscores to keep context in filename
-                    // e.g. "docs/finance/balanco.pdf" -> "docs_finance_balanco.pdf"
-                    const flatName = zipEntry.name.replace(/\//g, '_');
-                    const file = new File([blob], flatName, { type: 'application/pdf' });
-                    extractedFiles.push(file);
-                };
-                promises.push(promise());
+                fileEntries.push(zipEntry);
             }
         });
 
-        await Promise.all(promises);
+        // Process extraction in batches of 5 simultaneously to prevent memory overflow
+        const files = await processInBatches(fileEntries, 5, async (zipEntry) => {
+            const blob = await zipEntry.async('blob');
+            const flatName = zipEntry.name.replace(/\//g, '_');
+            return new File([blob], flatName, { type: 'application/pdf' });
+        });
+
+        extractedFiles.push(...files);
         return extractedFiles;
     } catch (error) {
         console.error("Error unzipping file:", error);

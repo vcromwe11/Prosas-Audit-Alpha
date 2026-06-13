@@ -39,13 +39,30 @@ export const extractTextFromPdf = async (file: File): Promise<string> => {
 };
 
 /**
+ * Helper to process items in batches (Fila Assíncrona Loteada)
+ * Prevents Memory Out Of Bounds errors by limiting concurrent operations.
+ */
+async function processInBatches<T, R>(
+  items: T[],
+  batchSize: number,
+  processor: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.all(batch.map((item, idx) => processor(item, i + idx)));
+    results.push(...batchResults);
+  }
+  return results;
+}
+
+/**
  * Extracts text from multiple files, adding headers to identify the source file.
  * This is crucial for the AI to distinguish between the "Bylaws" and the "Project Form".
+ * Processes in batches to optimize memory (Lazy Loading).
  */
 export const extractTextFromMultipleFiles = async (files: File[]): Promise<string> => {
-  let combinedText = "";
-
-  for (const file of files) {
+  const texts = await processInBatches(files, 3, async (file) => {
     try {
       let fileText = "";
       if (file.name.toLowerCase().endsWith('.txt')) {
@@ -59,46 +76,59 @@ export const extractTextFromMultipleFiles = async (files: File[]): Promise<strin
         fileText = pages.map(p => p.text).join('\n');
       }
       
-      combinedText += `\n\n=== INÍCIO DO ARQUIVO: ${file.name} ===\n`;
-      combinedText += fileText;
-      combinedText += `\n=== FIM DO ARQUIVO: ${file.name} ===\n`;
+      return `\n\n=== INÍCIO DO ARQUIVO: ${file.name} ===\n${fileText}\n=== FIM DO ARQUIVO: ${file.name} ===\n`;
     } catch (error) {
       console.error(`Error processing file ${file.name}:`, error);
-      combinedText += `\n\n[ERRO AO LER O ARQUIVO: ${file.name}]\n\n`;
+      return `\n\n[ERRO AO LER O ARQUIVO: ${file.name}]\n\n`;
     }
-  }
+  });
 
-  return combinedText;
+  return texts.join("");
 };
 
 const processPdfFile = async (file: File): Promise<PdfPage[]> => {
-  const arrayBuffer = await file.arrayBuffer();
-  const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });
-  const pdf = await loadingTask.promise;
+  // Use ObjectURL for Lazy Loading instead of loading entire ArrayBuffer to RAM
+  const fileUrl = URL.createObjectURL(file);
   
-  const pages: PdfPage[] = [];
+  try {
+    const loadingTask = pdfjsLib.getDocument({ url: fileUrl });
+    const pdf = await loadingTask.promise;
+    
+    const pageIndices = Array.from({ length: pdf.numPages }, (_, i) => i + 1);
+    
+    // Extrai as páginas em lotes para evitar estouro de RAM em relatórios de +100 páginas
+    const pagesWithNulls = await processInBatches(pageIndices, 5, async (i) => {
+      try {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const text = textContent.items
+          .map((item: any) => item.str)
+          .join(' ')
+          .replace(/\s+/g, ' ') // normalize whitespace
+          .trim();
 
-  for (let i = 1; i <= pdf.numPages; i++) {
-    try {
-      const page = await pdf.getPage(i);
-      const textContent = await page.getTextContent();
-      const text = textContent.items
-        .map((item: any) => item.str)
-        .join(' ')
-        .replace(/\s+/g, ' ') // normalize whitespace
-        .trim();
-
-      if (text.length > 20) { 
-        pages.push({
-          pageNumber: i,
-          text: text,
-          fileName: file.name
-        });
+        if (text.length > 20) { 
+          return {
+            pageNumber: i,
+            text: text,
+            fileName: file.name
+          };
+        }
+        return null;
+      } catch (error) {
+        console.error(`Error processing page ${i} of ${file.name}:`, error);
+        return null;
       }
-    } catch (error) {
-      console.error(`Error processing page ${i} of ${file.name}:`, error);
-    }
-  }
+    });
 
-  return pages;
+    const pages = pagesWithNulls.filter((p): p is NonNullable<typeof p> => p !== null);
+    
+    // Ensure pages are sorted by page number since Promise.all resolves concurrently
+    pages.sort((a, b) => a.pageNumber - b.pageNumber);
+
+    return pages;
+  } finally {
+    // Release the generic blob URL to free memory
+    URL.revokeObjectURL(fileUrl);
+  }
 };

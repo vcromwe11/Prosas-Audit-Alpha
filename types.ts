@@ -29,6 +29,8 @@ export interface CandidateAnalysis {
   files: File[];
   rawText: string;
   status: 'pending' | 'analyzing' | 'completed' | 'error';
+  analysisPhase?: 'WAITING' | 'AUTH' | 'AI_PROMPT' | 'DONE';
+  currentAuthTask?: string;
   result?: AuditResult;
   error?: string;
 }
@@ -62,7 +64,10 @@ export enum AppStage {
   ANALYSIS_RUN = 'ANALYSIS_RUN',
   REPORT_VIEW = 'REPORT_VIEW',
   SETTINGS = 'SETTINGS',
-  SEARCH = 'SEARCH'
+  SEARCH = 'SEARCH',
+  IDEAS = 'IDEAS',
+  MANAGE_USERS = 'MANAGE_USERS',
+  DEMO_PLATFORM = 'DEMO_PLATFORM'
 }
 
 export interface PdfPage {
@@ -72,6 +77,13 @@ export interface PdfPage {
 }
 
 // Persistence Types
+export interface StoredPrompt {
+  id: string;
+  userId: string;
+  text: string;
+  timestamp: number;
+}
+
 export interface SavedReport {
   id: string;
   editalName: string;
@@ -81,10 +93,54 @@ export interface SavedReport {
   result: AuditResult;
   manualStatus?: 'EM ANÁLISE' | 'APROVADO COM RESSALVAS' | 'REPROVADO' | 'APROVADO';
   userNotes?: string;
+  promptId?: string;
+  evaluatedBy?: string;
+  evaluatedAt?: number;
 }
 
 export interface UserProfile {
+  uid: string;
   name: string;
   email: string;
   avatarUrl: string;
+  role: 'admin' | 'analyst' | 'viewer';
+  state?: string;
+  company?: string;
+  jobFunction?: string;
+  temporaryPassword?: string;
+}
+
+export interface IdeaComment {
+  id: string;
+  userId: string;
+  userName: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface Idea {
+  id: string;
+  userId: string;
+  userName: string;
+  title: string;
+  description: string;
+  timestamp: number;
+  comments: IdeaComment[];
+}
+
+export interface GlobalPrompt {
+  id: string;
+  key: string;
+  text: string;
+  updatedBy: string;
+  timestamp: number;
+}
+
+export interface AppSettings {
+  theme: 'standard' | 'modern';
+  isBoldText: boolean;
+  maxConcurrentSlots: number;
+  autoSaveDrive: boolean;
+  compactMode: boolean;
+  showTooltips: boolean;
 }

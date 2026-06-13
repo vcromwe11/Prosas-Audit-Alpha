@@ -4,15 +4,18 @@ import { extractTextFromPdf } from './pdfService';
 export interface AuthEvaluationResult {
     passed: boolean;
     report: string;
+    processedFiles: string[];
 }
 
 export const runDeterministicAuth = async (
     files: File[],
     rules: DocumentAuthRule[],
-    referenceDate: string = ""
+    referenceDate: string = "",
+    onProgress?: (msg: string) => void
 ): Promise<AuthEvaluationResult> => {
     let passed = true;
     let reportLines: string[] = [];
+    const processedFiles: string[] = [];
 
     reportLines.push("=== RELATÓRIO DE PRÉ-ANÁLISE (AUTENTICAÇÃO DETERMINÍSTICA) ===");
     reportLines.push(`Data de Referência: ${referenceDate || 'Data Atual'}`);
@@ -21,6 +24,7 @@ export const runDeterministicAuth = async (
         if (!rule.documentType || !rule.dataToScrape) continue;
 
         const docLabel = rule.questionPrefix ? `[${rule.questionPrefix}] ${rule.documentType}` : `[${rule.documentType}]`;
+        if (onProgress) onProgress(`Analisando ${docLabel}...`);
 
         // Find the file that matches the prefix or the document type
         const file = files.find(f => {
@@ -35,6 +39,10 @@ export const runDeterministicAuth = async (
             reportLines.push(`❌ ${docLabel} Arquivo não encontrado.`);
             reportLines.push(`   Motivo: ${rule.rejectionTrigger || 'Documento obrigatório ausente.'}`);
             continue;
+        }
+
+        if (!processedFiles.includes(file.name)) {
+            processedFiles.push(file.name);
         }
 
         try {
@@ -101,15 +109,11 @@ export const runDeterministicAuth = async (
 
                 if (isStatusOk && isDateOk) {
                     reportLines.push(`✅ ${docLabel} Validado com sucesso.`);
-                    reportLines.push(`   CNPJ: ${cnpj}`);
-                    reportLines.push(`   Situação: ${status} (OK)`);
-                    reportLines.push(`   Emissão: ${emissionDate} (Dentro do prazo)`);
+                    reportLines.push(`   Justificativa: CNPJ ${cnpj} encontra-se com Situação ${status} (OK). O documento foi emitido na data ${emissionDate}, dentro do prazo de validade em relação à data de referência.`);
                 } else {
                     passed = false;
                     reportLines.push(`⚠️ PONTO DE ATENÇÃO: ${docLabel} Reprovado na validação determinística.`);
-                    reportLines.push(`   CNPJ: ${cnpj}`);
-                    reportLines.push(`   Situação: ${status} ${isStatusOk ? '(OK)' : '(INVÁLIDA - Deve ser ATIVA)'}`);
-                    reportLines.push(`   Emissão: ${emissionDate} ${isDateOk ? '(OK)' : '(FORA DO PRAZO - Emitido há mais de 3 meses da data de referência)'}`);
+                    reportLines.push(`   Justificativa: O CNPJ extraído não está regular. Situação encontrada: ${status} ${isStatusOk ? '(OK)' : '(INVÁLIDA - Deve ser ATIVA)'}. Data de emissão: ${emissionDate} ${isDateOk ? '(OK)' : '(FORA DO PRAZO - Emitido há mais de 3 meses)'}.`);
                     reportLines.push(`   Motivo: ${rule.rejectionTrigger || 'Documento irregular ou vencido.'}`);
                 }
                 continue;
@@ -136,6 +140,13 @@ export const runDeterministicAuth = async (
                         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
                         return diffDays <= 90;
                     }
+                    function isValidTo(dateStr, refDateStr) {
+                        const date = parseDate(dateStr);
+                        const refDate = refDateStr ? parseDate(refDateStr) : new Date();
+                        date.setHours(0,0,0,0);
+                        refDate.setHours(0,0,0,0);
+                        return date >= refDate;
+                    }
                     return ${rule.validationRule};
                 `);
                 isValid = evaluator(extractedValue.trim(), referenceDate);
@@ -150,13 +161,13 @@ export const runDeterministicAuth = async (
 
             if (isValid) {
                 reportLines.push(`✅ ${docLabel} ${rule.approvalTrigger || 'Validado com sucesso.'}`);
-                reportLines.push(`   Valor encontrado: ${extractedValue.trim()}`);
+                reportLines.push(`   Justificativa: O valor extraído ("${extractedValue.trim()}") atende ao padrão esperado e à regra de validação em relação à data de referência.`);
             } else {
                 passed = false;
-                const isDateRule = rule.validationRule.includes('isWithinThreeMonths');
+                const isDateRule = rule.validationRule.includes('isWithinThreeMonths') || rule.validationRule.includes('isValidTo');
                 const label = isDateRule ? '⚠️ PONTO DE ATENÇÃO' : '❌ Reprovado';
                 reportLines.push(`${label}: ${docLabel} Falha na validação.`);
-                reportLines.push(`   Valor encontrado: ${extractedValue.trim()}`);
+                reportLines.push(`   Justificativa: O valor extraído ("${extractedValue.trim()}") foi barrado pela regra ("${rule.validationRule}").`);
                 reportLines.push(`   Motivo: ${rule.rejectionTrigger || 'Não atende aos critérios da regra.'}`);
             }
 
@@ -171,6 +182,7 @@ export const runDeterministicAuth = async (
 
     return {
         passed,
-        report: reportLines.join('\n')
+        report: reportLines.join('\n'),
+        processedFiles
     };
 };

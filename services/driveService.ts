@@ -8,6 +8,13 @@ interface DriveFile {
   name: string;
 }
 
+export class DriveAuthError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'DriveAuthError';
+  }
+}
+
 /**
  * Searches for the backup file in the user's Drive.
  * Returns the file ID if found, null otherwise.
@@ -22,6 +29,10 @@ export const findBackupFile = async (accessToken: string): Promise<string | null
       'Content-Type': 'application/json'
     }
   });
+
+  if (response.status === 401) {
+    throw new DriveAuthError('Token expirado ou inválido');
+  }
 
   if (!response.ok) throw new Error('Falha ao buscar arquivos no Drive');
   
@@ -65,6 +76,10 @@ export const uploadToDrive = async (accessToken: string, data: any, fileId?: str
     body: form
   });
 
+  if (response.status === 401) {
+    throw new DriveAuthError('Token expirado ou inválido');
+  }
+
   if (!response.ok) {
      const err = await response.json();
      throw new Error(`Erro no upload: ${err.error?.message || 'Desconhecido'}`);
@@ -85,6 +100,10 @@ export const downloadFromDrive = async (accessToken: string, fileId: string): Pr
       'Authorization': `Bearer ${accessToken}`
     }
   });
+
+  if (response.status === 401) {
+    throw new DriveAuthError('Token expirado ou inválido');
+  }
 
   if (!response.ok) throw new Error('Falha ao baixar backup');
   

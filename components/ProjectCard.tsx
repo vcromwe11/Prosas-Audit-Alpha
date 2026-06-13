@@ -133,6 +133,7 @@ const ProjectCard: React.FC<Props> = ({
                                 <button 
                                     onClick={onTrigger}
                                     className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow-sm hover:shadow-md transform hover:-translate-y-0.5 transition-all duration-200 active:scale-95 flex items-center justify-center gap-2"
+                                    title="Inicia a verificação de conformidade do projeto com o edital"
                                 >
                                     <i className="fas fa-play"></i> Iniciar Análise Padrão
                                 </button>
@@ -140,6 +141,7 @@ const ProjectCard: React.FC<Props> = ({
                                     <button 
                                         onClick={onTriggerWithAuth}
                                         className="w-full bg-prosas-blue hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm hover:shadow-md transform hover:-translate-y-0.5 transition-all duration-200 active:scale-95 flex items-center justify-center gap-2"
+                                        title="Faz uma validação inicial de documentos institucionais antes de ler o projeto"
                                     >
                                         <i className="fas fa-shield-alt"></i> Análise com Autenticação
                                     </button>
@@ -153,7 +155,7 @@ const ProjectCard: React.FC<Props> = ({
                         <div>
                             <i className="fas fa-cloud-upload-alt text-gray-300 dark:text-gray-600 text-4xl mb-3"></i>
                             <p className="text-sm text-gray-400 dark:text-gray-500 mb-4">Proposta (PDFs ou ZIP)</p>
-                            <label className="cursor-pointer bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue text-gray-600 dark:text-gray-300 font-bold py-2 px-4 rounded transition-all active:scale-[0.98] inline-flex items-center gap-2 text-sm">
+                            <label className="cursor-pointer bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue text-gray-600 dark:text-gray-300 font-bold py-2 px-4 rounded transition-all active:scale-[0.98] inline-flex items-center gap-2 text-sm" title="Carregar os arquivos do projeto enviados pelo candidato">
                                 <input type="file" accept="application/pdf,.zip" multiple onChange={onFileSelect} className="hidden" />
                                 Selecionar Arquivos
                             </label>
@@ -166,18 +168,28 @@ const ProjectCard: React.FC<Props> = ({
             {project.status === 'analyzing' && (
                 <div className="w-full text-left animate-fade-in">
                     <div className="flex items-center justify-between mb-2">
-                        <span className="text-xs font-bold text-prosas-blue animate-pulse">
-                            <i className="fas fa-microchip mr-1"></i> Lendo Documentos...
-                        </span>
+                        {project.analysisPhase === 'WAITING' || !project.analysisPhase ? (
+                            <span className="text-xs font-bold text-gray-500 animate-pulse">
+                                <i className="fas fa-spinner fa-spin mr-1"></i> Preparando...
+                            </span>
+                        ) : project.analysisPhase === 'AUTH' ? (
+                            <span className="text-xs font-bold text-yellow-600 animate-pulse">
+                                <i className="fas fa-file-signature mr-1"></i> Executando Scripts de Autenticação...
+                            </span>
+                        ) : (
+                            <span className="text-xs font-bold text-prosas-blue animate-pulse">
+                                <i className="fas fa-microchip mr-1"></i> Análise de IA em Andamento...
+                            </span>
+                        )}
                         <span className="text-xs text-gray-400 dark:text-gray-500">
-                             Processando...
+                             {project.analysisPhase === 'AUTH' && project.currentAuthTask ? project.currentAuthTask : 'Processando...'}
                         </span>
                     </div>
 
-                    {/* Barra de progresso azul (neutra) */}
+                    {/* Barra de progresso dinâmica */}
                     <div className="w-full bg-gray-100 dark:bg-gray-700 rounded-full h-1.5 mb-4 overflow-hidden">
                         <div 
-                            className="bg-prosas-blue h-1.5 rounded-full transition-all duration-200 ease-out relative overflow-hidden"
+                            className={`${project.analysisPhase === 'AUTH' ? 'bg-yellow-500' : 'bg-prosas-blue'} h-1.5 rounded-full transition-all duration-200 ease-out relative overflow-hidden`}
                             style={{ width: `${stageProgress}%` }}
                         >
                              <div className="absolute inset-0 bg-white opacity-20 animate-pulse"></div>
@@ -254,12 +266,14 @@ const ProjectCard: React.FC<Props> = ({
                                 result: project.result!
                             })}
                             className="w-full bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:text-prosas-blue dark:hover:text-prosas-blue text-gray-600 dark:text-gray-300 font-bold py-2 rounded text-xs transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 shadow-sm hover:shadow-md"
+                            title="Abre a visualização detalhada para auditar o parecer e emitir uma nota manual"
                         >
                             Ver Relatório Completo
                         </button>
                         <button 
                             onClick={onTrigger}
                             className="w-full bg-gray-50 dark:bg-gray-700 hover:bg-gray-100 dark:hover:bg-gray-600 border border-gray-200 dark:border-gray-600 text-gray-600 dark:text-gray-300 font-bold py-2 rounded text-xs transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 shadow-sm hover:shadow-md flex items-center justify-center gap-2"
+                            title="Roda a análise com IA do zero, descartando o resultado atual"
                         >
                             <i className="fas fa-redo"></i> Refazer Análise
                         </button>

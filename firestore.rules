@@ -8,28 +8,36 @@ service cloud.firestore {
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
     }
+    function isAdmin() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
     function isValidString(text, min, max) {
       return text is string && text.size() >= min && text.size() <= max;
     }
     
     // Users collection
     match /users/{userId} {
-      allow read: if isOwner(userId);
+      allow read: if isAuthenticated(); // Allowed for user management screen
       
       function isValidUser(data) {
-        return data.keys().hasAll(['uid', 'email', 'displayName', 'createdAt'])
-          && data.keys().hasOnly(['uid', 'email', 'displayName', 'createdAt'])
+        return data.keys().hasAll(['uid', 'email', 'name', 'avatarUrl', 'role'])
+          && data.keys().hasOnly(['uid', 'email', 'name', 'avatarUrl', 'displayName', 'role', 'createdAt', 'state', 'company', 'jobFunction', 'temporaryPassword'])
           && data.uid == userId
-          && isValidString(data.email, 3, 100)
-          && isValidString(data.displayName, 0, 100)
-          && data.createdAt is string;
+          && isValidString(data.email, 0, 150)
+          && isValidString(data.name, 0, 150)
+          && isValidString(data.avatarUrl, 0, 1500)
+          && (!('displayName' in data) || isValidString(data.displayName, 0, 150))
+          && data.role in ['admin', 'analyst', 'viewer']
+          && (!('createdAt' in data) || data.createdAt is string || data.createdAt is number)
+          && (!('state' in data) || isValidString(data.state, 0, 150))
+          && (!('company' in data) || isValidString(data.company, 0, 150))
+          && (!('jobFunction' in data) || isValidString(data.jobFunction, 0, 150))
+          && (!('temporaryPassword' in data) || isValidString(data.temporaryPassword, 0, 150));
       }
       
-      allow create: if isOwner(userId) && isValidUser(request.resource.data);
-      allow update: if isOwner(userId) 
-        && isValidUser(request.resource.data)
-        && request.resource.data.uid == resource.data.uid;
-      allow delete: if false;
+      allow create: if (isOwner(userId) && request.resource.data.role == 'viewer') || isAdmin();
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role && request.resource.data.uid == resource.data.uid);
+      allow delete: if isAdmin();
 
       // Reports subcollection
       match /reports/{reportId} {
@@ -37,7 +45,7 @@ service cloud.firestore {
         
         function isValidReport(data) {
           return data.keys().hasAll(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result'])
-            && data.keys().hasOnly(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result', 'manualStatus', 'userNotes'])
+            && data.keys().hasOnly(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result', 'manualStatus', 'userNotes', 'promptId', 'evaluatedBy', 'evaluatedAt'])
             && isValidString(data.id, 1, 100)
             && data.userId == userId
             && isValidString(data.editalName, 0, 500)
@@ -47,19 +55,55 @@ service cloud.firestore {
             && data.timestamp > 0
             && isValidString(data.result, 2, 800000) // Max ~800KB for JSON result
             && (!('manualStatus' in data) || data.manualStatus == null || isValidString(data.manualStatus, 0, 50))
-            && (!('userNotes' in data) || data.userNotes == null || isValidString(data.userNotes, 0, 5000));
+            && (!('userNotes' in data) || data.userNotes == null || isValidString(data.userNotes, 0, 5000))
+            && (!('promptId' in data) || data.promptId == null || isValidString(data.promptId, 0, 100))
+            && (!('evaluatedBy' in data) || data.evaluatedBy == null || isValidString(data.evaluatedBy, 0, 150))
+            && (!('evaluatedAt' in data) || data.evaluatedAt == null || data.evaluatedAt is number);
         }
 
-        allow create: if isOwner(userId) 
-          && isValidReport(request.resource.data);
+        allow create: if isOwner(userId);
           
         allow update: if isOwner(userId)
-          && isValidReport(request.resource.data)
           && request.resource.data.id == resource.data.id
           && request.resource.data.userId == resource.data.userId
           && request.resource.data.timestamp == resource.data.timestamp; // Immutable fields
           
         allow delete: if isOwner(userId);
+      }
+
+      // Prompts subcollection
+      match /prompts/{promptId} {
+        allow read: if isOwner(userId);
+
+        allow create: if isOwner(userId);
+        allow update: if false; // Prompts are immutable
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Global Prompts collection
+    match /global_prompts/{promptId} {
+      allow read: if isAuthenticated();
+
+      allow create, update: if isAdmin() && request.resource.data.id == promptId;
+      allow delete: if false;
+    }
+
+    // Ideas collection
+    match /ideas/{ideaId} {
+      allow read: if isAuthenticated();
+
+      allow create: if isAuthenticated();
+      allow update: if isAuthenticated() && isOwner(resource.data.userId);
+      allow delete: if isAuthenticated() && isOwner(resource.data.userId);
+
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+
+        allow create: if isAuthenticated();
+        allow update: if isAuthenticated() && isOwner(resource.data.userId);
+        allow delete: if isAuthenticated() && isOwner(resource.data.userId);
       }
     }
   }

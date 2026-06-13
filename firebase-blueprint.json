@@ -8,8 +8,8 @@
         "uid": { "type": "string" },
         "email": { "type": "string" },
         "displayName": { "type": "string" },
-        "role": { "type": "string", "enum": ["LEITOR", "COMENTADOR", "EDITOR", "ADMIN", "DEV"] },
-        "createdAt": { "type": "number" }
+        "role": { "type": "string", "enum": ["admin", "analyst", "viewer"] },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["uid", "email", "role"]
     },
@@ -30,19 +30,57 @@
       },
       "required": ["id", "userId", "editalName", "candidateName", "timestamp", "result"]
     },
-    "Comment": {
-      "title": "Comment",
-      "description": "A comment/proposed change on a report",
+    "Idea": {
+      "title": "Idea",
+      "description": "A shared idea or note for app development",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "userId", "userName", "title", "description", "timestamp"]
+    },
+    "IdeaComment": {
+      "title": "IdeaComment",
+      "description": "A comment on a shared idea",
       "type": "object",
       "properties": {
         "id": { "type": "string" },
         "userId": { "type": "string" },
         "userName": { "type": "string" },
         "text": { "type": "string" },
-        "timestamp": { "type": "number" },
-        "status": { "type": "string", "enum": ["PENDING", "APPROVED", "REJECTED"] }
+        "timestamp": { "type": "number" }
       },
-      "required": ["id", "userId", "userName", "text", "timestamp", "status"]
+      "required": ["id", "userId", "userName", "text", "timestamp"]
+    },
+    "Prompt": {
+      "title": "Prompt",
+      "description": "A saved prompt used for analysis",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "text": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "userId", "text", "timestamp"]
+    },
+    "GlobalPrompt": {
+      "title": "GlobalPrompt",
+      "description": "A globally stored master prompt",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "key": { "type": "string" },
+        "text": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "key", "text", "updatedBy", "timestamp"]
     }
   },
   "firestore": {
@@ -50,13 +88,25 @@
       "schema": { "$ref": "#/entities/User" },
       "description": "User profiles"
     },
-    "reports/{reportId}": {
+    "users/{userId}/reports/{reportId}": {
       "schema": { "$ref": "#/entities/Report" },
-      "description": "Shared audit reports"
+      "description": "Audit reports saved by the user"
     },
-    "reports/{reportId}/comments/{commentId}": {
-      "schema": { "$ref": "#/entities/Comment" },
-      "description": "Comments on a specific report"
+    "users/{userId}/prompts/{promptId}": {
+      "schema": { "$ref": "#/entities/Prompt" },
+      "description": "Prompts saved by the user"
+    },
+    "ideas/{ideaId}": {
+      "schema": { "$ref": "#/entities/Idea" },
+      "description": "Shared ideas and notes"
+    },
+    "ideas/{ideaId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/IdeaComment" },
+      "description": "Comments on a shared idea"
+    },
+    "global_prompts/{promptId}": {
+      "schema": { "$ref": "#/entities/GlobalPrompt" },
+      "description": "Global master prompts"
     }
   }
 }

@@ -18,6 +18,8 @@ View your app in AI Studio: https://ai.studio/apps/0dea86c6-2653-4e9e-af80-768c0
 2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
 3. Run the app:
    `npm run dev`
+
+   
 Guia de Funcionalidades e Arquitetura — prosas AUDIT
 Este documento detalha o funcionamento, o estado operacional e os aspectos técnicos do sistema prosas AUDIT — uma plataforma de auditoria inteligente de propostas e editais que integra inteligência artificial generativa multimodal com regras determinísticas locais.
 1. Visão Geral do Sistema

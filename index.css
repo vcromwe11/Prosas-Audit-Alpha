@@ -93,3 +93,415 @@ html.dark body.theme-modern .bg-gray-800\/50 {
 html.dark body.theme-modern .bg-gray-900 {
   background-color: #020617 !important; /* slate-950 */
 }
+
+/* ==========================================================================
+   CONSOLIDATED VISUAL PORTAL THEMES (WARM SUNSET, GLACIAL COOL, MATTE MONO)
+   ========================================================================== */
+
+/* -------------------- 🌅 THEME WARM ( Sunset Glow ) -------------------- */
+body.theme-warm {
+  background-color: #fdfaf6 !important;
+  color: #3d3028 !important;
+}
+html.dark body.theme-warm {
+  background-color: #130e0c !important;
+  color: #f5eae2 !important;
+}
+
+/* Background overrides */
+body.theme-warm .bg-white {
+  background-color: #ffffff !important; /* Elegant warm white */
+}
+html.dark body.theme-warm .bg-white,
+html.dark body.theme-warm .bg-gray-800,
+html.dark body.theme-warm aside,
+html.dark body.theme-warm .bg-white\/10 {
+  background-color: #1e1512 !important; /* Dark warm brick/chocolate */
+}
+
+body.theme-warm .bg-gray-50,
+body.theme-warm main,
+body.theme-warm .bg-gray-100 {
+  background-color: #fdfaf6 !important;
+}
+html.dark body.theme-warm .bg-gray-50,
+html.dark body.theme-warm main,
+html.dark body.theme-warm .bg-gray-900,
+html.dark body.theme-warm .bg-gray-950 {
+  background-color: #130e0c !important;
+}
+
+body.theme-warm input,
+body.theme-warm select,
+body.theme-warm textarea {
+  background-color: #fdfbf9 !important;
+  border-color: #f3e4d8 !important;
+  color: #3d3028 !important;
+}
+html.dark body.theme-warm input,
+html.dark body.theme-warm select,
+html.dark body.theme-warm textarea {
+  background-color: #18110f !important;
+  border-color: #2f211c !important;
+  color: #f5eae2 !important;
+}
+
+/* Borders */
+body.theme-warm .border-gray-100,
+body.theme-warm .border-gray-150,
+body.theme-warm .border-gray-200,
+body.theme-warm .border-gray-300,
+body.theme-warm .divide-gray-100,
+body.theme-warm .divide-gray-200,
+body.theme-warm .border-r,
+body.theme-warm .border-l,
+body.theme-warm .border-t,
+body.theme-warm .border-b {
+  border-color: #f3e4d8 !important;
+}
+html.dark body.theme-warm .border-gray-700,
+html.dark body.theme-warm .border-gray-600,
+html.dark body.theme-warm .border-gray-250,
+html.dark body.theme-warm .border-gray-200,
+html.dark body.theme-warm .border-gray-150,
+html.dark body.theme-warm .divide-gray-700,
+html.dark body.theme-warm .border-r,
+html.dark body.theme-warm .border-l,
+html.dark body.theme-warm .border-t,
+html.dark body.theme-warm .border-b {
+  border-color: #2f211c !important;
+}
+
+/* Accent background tones */
+body.theme-warm .bg-blue-50,
+body.theme-warm .bg-emerald-50,
+body.theme-warm .bg-blue-100,
+body.theme-warm .bg-emerald-100 {
+  background-color: #fef3c7 !important; /* Soft honey light accent */
+  color: #b45309 !important;
+}
+html.dark body.theme-warm .bg-blue-900\/10,
+html.dark body.theme-warm .bg-[#1a2333]\/30,
+html.dark body.theme-warm .bg-emerald-950\/20,
+html.dark body.theme-warm .bg-blue-100,
+html.dark body.theme-warm .bg-emerald-100 {
+  background-color: #451a03a0 !important; /* Glowing warm dark orange accent */
+  color: #fbbf24 !important;
+}
+
+/* Accordion tables */
+body.theme-warm .bg-gray-50,
+body.theme-warm .bg-gray-700\/50,
+body.theme-warm .bg-gray-800\/50 {
+  background-color: #fcf6ee !important;
+}
+html.dark body.theme-warm .bg-gray-50,
+html.dark body.theme-warm .bg-gray-700\/50,
+html.dark body.theme-warm .bg-gray-800\/50 {
+  background-color: #2c1f1a !important;
+}
+
+/* Text overrides */
+body.theme-warm .text-gray-800,
+body.theme-warm .text-slate-800,
+body.theme-warm .text-gray-900,
+body.theme-warm .text-slate-900,
+body.theme-warm .text-gray-700,
+body.theme-warm .text-slate-700 {
+  color: #3d3028 !important;
+}
+html.dark body.theme-warm .text-gray-800,
+html.dark body.theme-warm .text-slate-800,
+html.dark body.theme-warm .text-gray-900,
+html.dark body.theme-warm .text-slate-900,
+html.dark body.theme-warm .text-gray-700,
+html.dark body.theme-warm .text-slate-700,
+html.dark body.theme-warm .text-gray-100,
+html.dark body.theme-warm .text-slate-200 {
+  color: #f5eae2 !important;
+}
+
+body.theme-warm .text-gray-500,
+body.theme-warm .text-slate-500,
+body.theme-warm .text-gray-400,
+body.theme-warm .text-slate-400 {
+  color: #8c7769 !important;
+}
+html.dark body.theme-warm .text-gray-500,
+html.dark body.theme-warm .text-slate-500,
+html.dark body.theme-warm .text-gray-400,
+html.dark body.theme-warm .text-slate-400 {
+  color: #be9a81 !important;
+}
+
+/* -------------------- ❄️ THEME COOL ( Glacial Frost ) -------------------- */
+body.theme-cool {
+  background-color: #f1f6f9 !important;
+  color: #152232 !important;
+}
+html.dark body.theme-cool {
+  background-color: #0b0f19 !important;
+  color: #e5f3fc !important;
+}
+
+/* Background overrides */
+body.theme-cool .bg-white {
+  background-color: #ffffff !important;
+}
+html.dark body.theme-cool .bg-white,
+html.dark body.theme-cool .bg-gray-800,
+html.dark body.theme-cool aside,
+html.dark body.theme-cool .bg-white\/10 {
+  background-color: #121a28 !important; /* Deep ocean navy */
+}
+
+body.theme-cool .bg-gray-50,
+body.theme-cool main,
+body.theme-cool .bg-gray-100 {
+  background-color: #f1f6f9 !important;
+}
+html.dark body.theme-cool .bg-gray-50,
+html.dark body.theme-cool main,
+html.dark body.theme-cool .bg-gray-900,
+html.dark body.theme-cool .bg-gray-950 {
+  background-color: #0b0f19 !important;
+}
+
+body.theme-cool input,
+body.theme-cool select,
+body.theme-cool textarea {
+  background-color: #f5fafd !important;
+  border-color: #d6e4ee !important;
+  color: #152232 !important;
+}
+html.dark body.theme-cool input,
+html.dark body.theme-cool select,
+html.dark body.theme-cool textarea {
+  background-color: #0d131f !important;
+  border-color: #20314a !important;
+  color: #e5f3fc !important;
+}
+
+/* Borders */
+body.theme-cool .border-gray-100,
+body.theme-cool .border-gray-150,
+body.theme-cool .border-gray-200,
+body.theme-cool .border-gray-300,
+body.theme-cool .divide-gray-100,
+body.theme-cool .divide-gray-200,
+body.theme-cool .border-r,
+body.theme-cool .border-l,
+body.theme-cool .border-t,
+body.theme-cool .border-b {
+  border-color: #d6e4ee !important;
+}
+html.dark body.theme-cool .border-gray-700,
+html.dark body.theme-cool .border-gray-600,
+html.dark body.theme-cool .border-gray-250,
+html.dark body.theme-cool .border-gray-200,
+html.dark body.theme-cool .border-gray-150,
+html.dark body.theme-cool .divide-gray-700,
+html.dark body.theme-cool .border-r,
+html.dark body.theme-cool .border-l,
+html.dark body.theme-cool .border-t,
+html.dark body.theme-cool .border-b {
+  border-color: #20314a !important;
+}
+
+/* Accent background tones */
+body.theme-cool .bg-blue-50,
+body.theme-cool .bg-emerald-50,
+body.theme-cool .bg-blue-100,
+body.theme-cool .bg-emerald-100 {
+  background-color: #ecfeff !important;
+  color: #0891b2 !important;
+}
+html.dark body.theme-cool .bg-blue-900\/10,
+html.dark body.theme-cool .bg-[#1a2333]\/30,
+html.dark body.theme-cool .bg-emerald-950\/20,
+html.dark body.theme-cool .bg-blue-100,
+html.dark body.theme-cool .bg-emerald-100 {
+  background-color: #0c4a6e70 !important;
+  color: #22d3ee !important;
+}
+
+/* Accordion tables */
+body.theme-cool .bg-gray-50,
+body.theme-cool .bg-gray-700\/50,
+body.theme-cool .bg-gray-800\/50 {
+  background-color: #e5edf5 !important;
+}
+html.dark body.theme-cool .bg-gray-50,
+html.dark body.theme-cool .bg-gray-700\/50,
+html.dark body.theme-cool .bg-gray-800\/50 {
+  background-color: #1a243a !important;
+}
+
+/* Text overrides */
+body.theme-cool .text-gray-800,
+body.theme-cool .text-slate-800,
+body.theme-cool .text-gray-900,
+body.theme-cool .text-slate-900,
+body.theme-cool .text-gray-700,
+body.theme-cool .text-slate-700 {
+  color: #152232 !important;
+}
+html.dark body.theme-cool .text-gray-800,
+html.dark body.theme-cool .text-slate-800,
+html.dark body.theme-cool .text-gray-900,
+html.dark body.theme-cool .text-slate-900,
+html.dark body.theme-cool .text-gray-700,
+html.dark body.theme-cool .text-slate-700,
+html.dark body.theme-cool .text-gray-100,
+html.dark body.theme-cool .text-slate-200 {
+  color: #e5f3fc !important;
+}
+
+body.theme-cool .text-gray-500,
+body.theme-cool .text-slate-500,
+body.theme-cool .text-gray-400,
+body.theme-cool .text-slate-400 {
+  color: #68809a !important;
+}
+html.dark body.theme-cool .text-gray-500,
+html.dark body.theme-cool .text-slate-500,
+html.dark body.theme-cool .text-gray-400,
+html.dark body.theme-cool .text-slate-400 {
+  color: #88b2cf !important;
+}
+
+/* -------------------- 🖤 THEME MONO ( Brutalist Noir ) -------------------- */
+body.theme-mono {
+  background-color: #fafafa !important;
+  color: #000000 !important;
+}
+html.dark body.theme-mono {
+  background-color: #000000 !important; /* Pitch black */
+  color: #ffffff !important; /* Pure white */
+}
+
+/* Background overrides */
+body.theme-mono .bg-white {
+  background-color: #ffffff !important;
+}
+html.dark body.theme-mono .bg-white,
+html.dark body.theme-mono .bg-gray-800,
+html.dark body.theme-mono aside,
+html.dark body.theme-mono .bg-white\/10 {
+  background-color: #0f0f0f !important; /* Pure carbon */
+}
+
+body.theme-mono .bg-gray-50,
+body.theme-mono main,
+body.theme-mono .bg-gray-100 {
+  background-color: #f3f3f3 !important;
+}
+html.dark body.theme-mono .bg-gray-50,
+html.dark body.theme-mono main,
+html.dark body.theme-mono .bg-gray-900,
+html.dark body.theme-mono .bg-gray-950 {
+  background-color: #000000 !important;
+}
+
+body.theme-mono input,
+body.theme-mono select,
+body.theme-mono textarea {
+  background-color: #ffffff !important;
+  border-color: #000000 !important;
+  color: #000000 !important;
+}
+html.dark body.theme-mono input,
+html.dark body.theme-mono select,
+html.dark body.theme-mono textarea {
+  background-color: #050505 !important;
+  border-color: #333333 !important;
+  color: #ffffff !important;
+}
+
+/* Borders */
+body.theme-mono .border-gray-100,
+body.theme-mono .border-gray-150,
+body.theme-mono .border-gray-200,
+body.theme-mono .border-gray-300,
+body.theme-mono .divide-gray-100,
+body.theme-mono .divide-gray-200,
+body.theme-mono .border-r,
+body.theme-mono .border-l,
+body.theme-mono .border-t,
+body.theme-mono .border-b {
+  border-color: #222222 !important;
+}
+html.dark body.theme-mono .border-gray-700,
+html.dark body.theme-mono .border-gray-600,
+html.dark body.theme-mono .border-gray-250,
+html.dark body.theme-mono .border-gray-200,
+html.dark body.theme-mono .border-gray-150,
+html.dark body.theme-mono .divide-gray-700,
+html.dark body.theme-mono .border-r,
+html.dark body.theme-mono .border-l,
+html.dark body.theme-mono .border-t,
+html.dark body.theme-mono .border-b {
+  border-color: #333333 !important;
+}
+
+/* Accent background tones */
+body.theme-mono .bg-blue-50,
+body.theme-mono .bg-emerald-50,
+body.theme-mono .bg-blue-100,
+body.theme-mono .bg-emerald-100 {
+  background-color: #eeeeee !important;
+  color: #000000 !important;
+}
+html.dark body.theme-mono .bg-blue-900\/10,
+html.dark body.theme-mono .bg-[#1a2333]\/30,
+html.dark body.theme-mono .bg-emerald-950\/20,
+html.dark body.theme-mono .bg-blue-100,
+html.dark body.theme-mono .bg-emerald-100 {
+  background-color: #222222 !important;
+  color: #ffffff !important;
+}
+
+/* Accordion tables */
+body.theme-mono .bg-gray-50,
+body.theme-mono .bg-gray-700\/50,
+body.theme-mono .bg-gray-800\/50 {
+  background-color: #f3f3f3 !important;
+}
+html.dark body.theme-mono .bg-gray-50,
+html.dark body.theme-mono .bg-gray-700\/50,
+html.dark body.theme-mono .bg-gray-800\/50 {
+  background-color: #1a1a1a !important;
+}
+
+/* Text overrides */
+body.theme-mono .text-gray-800,
+body.theme-mono .text-slate-800,
+body.theme-mono .text-gray-900,
+body.theme-mono .text-slate-900,
+body.theme-mono .text-gray-700,
+body.theme-mono .text-slate-700 {
+  color: #000000 !important;
+}
+html.dark body.theme-mono .text-gray-800,
+html.dark body.theme-mono .text-slate-800,
+html.dark body.theme-mono .text-gray-900,
+html.dark body.theme-mono .text-slate-900,
+html.dark body.theme-mono .text-gray-700,
+html.dark body.theme-mono .text-slate-700,
+html.dark body.theme-mono .text-gray-100,
+html.dark body.theme-mono .text-slate-200 {
+  color: #ffffff !important;
+}
+
+body.theme-mono .text-gray-500,
+body.theme-mono .text-slate-500,
+body.theme-mono .text-gray-400,
+body.theme-mono .text-slate-400 {
+  color: #444444 !important;
+}
+html.dark body.theme-mono .text-gray-500,
+html.dark body.theme-mono .text-slate-500,
+html.dark body.theme-mono .text-gray-400,
+html.dark body.theme-mono .text-slate-400 {
+  color: #a0a0a0 !important;
+}

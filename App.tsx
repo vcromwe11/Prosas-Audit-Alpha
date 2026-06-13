@@ -122,7 +122,7 @@ const App: React.FC = () => {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          return { theme: 'classic', ...parsed };
+          return { theme: 'classic', visualTheme: 'classic', ...parsed };
         } catch (e) {}
       }
     }
@@ -132,11 +132,29 @@ const App: React.FC = () => {
       autoSaveDrive: false,
       compactMode: false,
       theme: 'classic',
+      visualTheme: 'classic',
       showTooltips: true
     };
   });
 
   const [analysisMode, setAnalysisMode] = useState<'IA_COMPLETA' | 'IA_OTIMIZADA'>('IA_COMPLETA');
+  const isOtimizada = analysisMode === 'IA_OTIMIZADA';
+  
+  const visualThemeKey = appSettings.visualTheme || 'classic';
+  
+  const colorsStyle = {
+      accentText: isOtimizada ? 'text-emerald-600 dark:text-emerald-400' : (visualThemeKey === 'warm' ? 'text-amber-600 dark:text-amber-400' : visualThemeKey === 'cool' ? 'text-cyan-600 dark:text-cyan-400' : visualThemeKey === 'mono' ? 'text-gray-900 dark:text-gray-100 font-bold' : 'text-prosas-blue'),
+      accentTextHover: isOtimizada ? 'hover:text-emerald-500 dark:hover:text-emerald-400' : (visualThemeKey === 'warm' ? 'hover:text-amber-500 dark:hover:text-amber-400' : visualThemeKey === 'cool' ? 'hover:text-cyan-500/90 dark:hover:text-cyan-400' : visualThemeKey === 'mono' ? 'hover:text-gray-700 dark:hover:text-gray-300' : 'hover:text-prosas-blue dark:hover:text-prosas-blue'),
+      accentBg: isOtimizada ? 'bg-emerald-600 dark:bg-emerald-500' : (visualThemeKey === 'warm' ? 'bg-amber-600 dark:bg-amber-500' : visualThemeKey === 'cool' ? 'bg-cyan-600 dark:bg-cyan-500' : visualThemeKey === 'mono' ? 'bg-gray-950 dark:bg-white text-white dark:text-black font-semibold' : 'bg-prosas-blue'),
+      accentBgHover: isOtimizada ? 'hover:bg-emerald-700 dark:hover:bg-emerald-600' : (visualThemeKey === 'warm' ? 'hover:bg-amber-700 dark:hover:bg-amber-600' : visualThemeKey === 'cool' ? 'hover:bg-cyan-700 dark:hover:bg-cyan-600' : visualThemeKey === 'mono' ? 'hover:bg-gray-800 dark:hover:bg-gray-100' : 'hover:bg-prosas-blueDark'),
+      accentBgLight: isOtimizada ? 'bg-emerald-50 dark:bg-emerald-950/20' : (visualThemeKey === 'warm' ? 'bg-amber-50 dark:bg-amber-950/20' : visualThemeKey === 'cool' ? 'bg-cyan-50 dark:bg-cyan-950/20' : visualThemeKey === 'mono' ? 'bg-gray-100 dark:bg-gray-900/50' : 'bg-blue-50 dark:bg-blue-900/10'),
+      accentBgLightIcon: isOtimizada ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-650 dark:text-emerald-400' : (visualThemeKey === 'warm' ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400' : visualThemeKey === 'cool' ? 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-550' : visualThemeKey === 'mono' ? 'bg-gray-200 dark:bg-gray-800 text-gray-900 dark:text-gray-100' : 'bg-blue-100 dark:bg-blue-900/30 text-prosas-blue'),
+      accentBorder: isOtimizada ? 'border-emerald-500' : (visualThemeKey === 'warm' ? 'border-amber-500' : visualThemeKey === 'cool' ? 'border-cyan-500' : visualThemeKey === 'mono' ? 'border-gray-950 dark:border-gray-100' : 'border-prosas-blue'),
+      accentHoverBorder: isOtimizada ? 'hover:border-emerald-500 dark:hover:border-emerald-500' : (visualThemeKey === 'warm' ? 'hover:border-amber-500 dark:hover:border-amber-500' : visualThemeKey === 'cool' ? 'hover:border-cyan-500 dark:hover:border-cyan-500' : visualThemeKey === 'mono' ? 'hover:border-gray-950 dark:hover:border-gray-100' : 'hover:border-prosas-blue dark:hover:border-prosas-blue'),
+      accentFocusRing: isOtimizada ? 'focus:ring-emerald-500' : (visualThemeKey === 'warm' ? 'focus:ring-amber-500' : visualThemeKey === 'cool' ? 'focus:ring-cyan-500' : visualThemeKey === 'mono' ? 'focus:ring-gray-950 dark:focus:ring-gray-100' : 'focus:ring-prosas-blue'),
+      accentCardSelectedBg: isOtimizada ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-950/10' : (visualThemeKey === 'warm' ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/10' : visualThemeKey === 'cool' ? 'border-cyan-400 bg-cyan-50 dark:bg-cyan-950/10' : visualThemeKey === 'mono' ? 'border-gray-850 dark:border-gray-200 bg-gray-100 dark:bg-gray-800/40' : 'border-blue-400 bg-blue-50 dark:bg-blue-900/10'),
+      accentCardSelectedText: isOtimizada ? 'text-emerald-700 dark:text-emerald-450' : (visualThemeKey === 'warm' ? 'text-amber-700 dark:text-amber-450' : visualThemeKey === 'cool' ? 'text-cyan-700 dark:text-cyan-450' : visualThemeKey === 'mono' ? 'text-gray-900 dark:text-gray-100' : 'text-blue-700 dark:text-blue-400')
+  };
   const [isTemplatesPanelOpen, setIsTemplatesPanelOpen] = useState(false);
   const [scannedSuggestions, setScannedSuggestions] = useState<any[]>([]);
   const [isScanningFiles, setIsScanningFiles] = useState(false);
@@ -153,6 +171,17 @@ const App: React.FC = () => {
       document.body.classList.add('theme-modern');
     } else {
       document.body.classList.remove('theme-modern');
+    }
+
+    // Apply exact visual theme class overrides on document.body
+    document.body.classList.remove('theme-warm', 'theme-cool', 'theme-mono');
+    const visualThemeKey = appSettings.visualTheme || 'classic';
+    if (visualThemeKey === 'warm') {
+      document.body.classList.add('theme-warm');
+    } else if (visualThemeKey === 'cool') {
+      document.body.classList.add('theme-cool');
+    } else if (visualThemeKey === 'mono') {
+      document.body.classList.add('theme-mono');
     }
   }, [appSettings]);
 
@@ -825,7 +854,7 @@ const App: React.FC = () => {
                         setCandidates([]); // Reset para nova análise limpa
                         handleSetStage(AppStage.ANALYSIS_SETUP);
                     }}
-                    className={`w-full bg-prosas-blue hover:bg-prosas-blueDark text-white font-bold py-3 rounded shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center justify-center gap-2 text-sm uppercase tracking-wide ${isSidebarCollapsed ? 'px-0' : 'px-4'}`}
+                    className={`w-full ${colorsStyle.accentBg} ${colorsStyle.accentBgHover} text-white font-bold py-3 rounded shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center justify-center gap-2 text-sm uppercase tracking-wide ${isSidebarCollapsed ? 'px-0' : 'px-4'}`}
                     title="Nova Análise"
                   >
                       <i className="fas fa-plus"></i> {!isSidebarCollapsed && "Nova Análise"}
@@ -1156,7 +1185,7 @@ const App: React.FC = () => {
                >
                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
                        <div className="flex items-center gap-4">
-                           <button onClick={() => handleSetStage(AppStage.DASHBOARD)} className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-400 hover:text-prosas-blue dark:hover:text-prosas-blue transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 shadow-sm hover:shadow">
+                           <button onClick={() => handleSetStage(AppStage.DASHBOARD)} className={`w-10 h-10 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 flex items-center justify-center text-gray-500 dark:text-gray-400 ${isOtimizada ? 'hover:text-emerald-500' : 'hover:text-prosas-blue'} transition-all duration-200 transform hover:-translate-y-0.5 active:scale-95 shadow-sm hover:shadow`}>
                                <i className="fas fa-arrow-left"></i>
                            </button>
                            <div>
@@ -1167,15 +1196,15 @@ const App: React.FC = () => {
                        <div className="flex items-center bg-gray-100 dark:bg-gray-800 p-1 rounded-lg border border-gray-200 dark:border-gray-700 self-start sm:self-auto">
                             <button
                                 onClick={() => setAnalysisMode('IA_COMPLETA')}
-                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${analysisMode === 'IA_COMPLETA' ? 'bg-white dark:bg-gray-700 text-prosas-blue shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${analysisMode === 'IA_COMPLETA' ? 'bg-white dark:bg-gray-700 text-prosas-blue shadow-sm border border-blue-100 dark:border-blue-800/20' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
                             >
-                                <i className="fas fa-brain mr-2"></i> IA Completa
+                                <i className={`fas fa-brain mr-2 ${analysisMode === 'IA_COMPLETA' ? 'text-prosas-blue' : ''}`}></i> IA Completa
                             </button>
                             <button
                                 onClick={() => setAnalysisMode('IA_OTIMIZADA')}
-                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${analysisMode === 'IA_OTIMIZADA' ? 'bg-white dark:bg-gray-700 text-prosas-blue shadow-sm' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
+                                className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${analysisMode === 'IA_OTIMIZADA' ? 'bg-white dark:bg-gray-700 text-emerald-600 dark:text-emerald-400 shadow-sm border border-emerald-100 dark:border-emerald-805/20' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'}`}
                             >
-                                <i className="fas fa-bolt mr-2"></i> IA Otimizada
+                                <i className={`fas fa-bolt mr-2 ${analysisMode === 'IA_OTIMIZADA' ? 'text-emerald-500' : ''}`}></i> IA Otimizada <span className="ml-1 text-[9px] bg-amber-100 text-amber-800 dark:bg-amber-900/45 dark:text-amber-400 px-1.5 py-0.5 rounded font-black tracking-wider uppercase border border-amber-200/50 dark:border-amber-800/30">BETA</span>
                             </button>
                        </div>
                    </div>
@@ -1183,7 +1212,7 @@ const App: React.FC = () => {
                    {/* SECTION 1: DOCUMENT UPLOADS */}
                    <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8 transition-colors duration-200">
                         <div className="flex items-center gap-3 mb-6 pb-4 border-b border-gray-100 dark:border-gray-700">
-                            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-prosas-blue rounded-lg">
+                            <div className={`p-2 rounded-lg ${colorsStyle.accentBgLightIcon}`}>
                                 <i className="fas fa-folder-open text-xl"></i>
                             </div>
                             <div>
@@ -1227,12 +1256,12 @@ const App: React.FC = () => {
                              {/* Form Template Card */}
                              <div className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center transition-colors relative min-h-[200px] ${
                                  context.formTemplateText 
-                                 ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/10' 
-                                 : 'border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                                 ? colorsStyle.accentCardSelectedBg 
+                                 : `border-gray-300 dark:border-gray-600 ${colorsStyle.accentHoverBorder} hover:bg-gray-50 dark:hover:bg-gray-700/50`
                              }`}>
                                 {context.formTemplateText && (
                                     <div className="absolute top-3 right-3 flex items-center gap-2">
-                                        <div className="text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                        <div className={`bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm ${colorsStyle.accentText}`}><i className="fas fa-check-circle"></i></div>
                                         <button 
                                             onClick={() => setContext({...context, formTemplateText: ''})} 
                                             className="text-gray-400 hover:text-red-500 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm transition-colors"
@@ -1242,12 +1271,12 @@ const App: React.FC = () => {
                                         </button>
                                     </div>
                                 )}
-                                <i className={`fas fa-file-alt text-4xl mb-4 ${context.formTemplateText ? 'text-blue-500 dark:text-blue-400' : 'text-gray-300 dark:text-gray-600'}`}></i>
+                                <i className={`fas fa-file-alt text-4xl mb-4 ${context.formTemplateText ? colorsStyle.accentText : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Modelo de Formulário</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Estrutura da proposta.</p>
                                 <Tooltip text="Opcional. Adicione o modelo visual de formulário do edital se desejar." enabled={appSettings.showTooltips} position="top">
                                   <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                      context.formTemplateText ? 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                      context.formTemplateText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
                                   }`}>
                                       <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'form')} />
                                       {context.formTemplateText ? 'Carregado' : 'Selecionar'}
@@ -1258,12 +1287,12 @@ const App: React.FC = () => {
                              {/* Misc Files Card */}
                              <div className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center transition-colors relative min-h-[200px] ${
                                  context.miscFilesText 
-                                 ? 'border-blue-400 bg-blue-50 dark:bg-blue-900/10' 
-                                 : 'border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:bg-gray-50 dark:hover:bg-gray-700/50'
+                                 ? colorsStyle.accentCardSelectedBg 
+                                 : `border-gray-300 dark:border-gray-600 ${colorsStyle.accentHoverBorder} hover:bg-gray-50 dark:hover:bg-gray-700/50`
                              }`}>
                                 {context.miscFilesText && (
                                     <div className="absolute top-3 right-3 flex items-center gap-2">
-                                        <div className="text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
+                                        <div className={`bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm ${colorsStyle.accentText}`}><i className="fas fa-check-circle"></i></div>
                                         <button 
                                             onClick={() => setContext({...context, miscFilesText: ''})} 
                                             className="text-gray-400 hover:text-red-500 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm transition-colors"
@@ -1273,12 +1302,12 @@ const App: React.FC = () => {
                                         </button>
                                     </div>
                                 )}
-                                <i className={`fas fa-paperclip text-4xl mb-4 ${context.miscFilesText ? 'text-blue-500 dark:text-blue-400' : 'text-gray-300 dark:text-gray-600'}`}></i>
+                                <i className={`fas fa-paperclip text-4xl mb-4 ${context.miscFilesText ? colorsStyle.accentText : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Outros Anexos</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Manuais ou erratas.</p>
                                 <Tooltip text="Opcional. Inclua erratas, guias, manuais adicionais ou anexos extras relevantes." enabled={appSettings.showTooltips} position="top">
                                   <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                      context.miscFilesText ? 'bg-white dark:bg-gray-800 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                      context.miscFilesText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
                                   }`}>
                                       <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'misc')} />
                                       {context.miscFilesText ? 'Carregado' : 'Selecionar'}
@@ -1289,7 +1318,8 @@ const App: React.FC = () => {
                    </div>
 
                    {/* SECTION 2: AUTH RULES */}
-                   <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8 transition-colors duration-200">
+                   {isOtimizada && (
+                       <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8 transition-colors duration-200">
                         <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-100 dark:border-gray-700">
                             <div className="flex items-center gap-3">
                                 <div className="p-2 bg-blue-100 dark:bg-blue-900/30 text-blue-600 rounded-lg">
@@ -1794,6 +1824,7 @@ const App: React.FC = () => {
                             </div>
                         </div>
                    </div>
+                   )}
 
                    {/* SECTION 3: PROMPT CRITERIA */}
                    <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8 transition-colors duration-200">
@@ -1803,7 +1834,7 @@ const App: React.FC = () => {
                                     <i className="fas fa-magic text-xl"></i>
                                 </div>
                                 <div>
-                                    <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">3. Critérios da IA (Prompt)</h2>
+                                    <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">{isOtimizada ? "3. Critérios da IA (Prompt)" : "2. Critérios da IA (Prompt)"}</h2>
                                     <p className="text-sm text-gray-500 dark:text-gray-400">Edite as regras lógicas que a IA usará para aprovar ou reprovar.</p>
                                 </div>
                             </div>
@@ -1813,7 +1844,7 @@ const App: React.FC = () => {
                                       <button
                                           onClick={() => setIsPromptMenuOpen(!isPromptMenuOpen)}
                                           disabled={isGeneratingCriteria}
-                                          className="bg-prosas-blue hover:bg-prosas-blueDark text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                                          className={`${colorsStyle.accentBg} ${colorsStyle.accentBgHover} text-white px-4 py-2 rounded-lg text-sm font-bold shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none`}
                                       >
                                           {isGeneratingCriteria ? (
                                               <><i className="fas fa-circle-notch fa-spin"></i> Gerando...</>
@@ -1837,7 +1868,7 @@ const App: React.FC = () => {
                                                         className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded transition-colors group"
                                                     >
                                                         <div className="flex items-center justify-between mb-1">
-                                                            <span className="font-bold text-gray-800 dark:text-gray-200 text-sm group-hover:text-prosas-blue"><i className="fas fa-bolt text-yellow-500 mr-2"></i>Econômica</span>
+                                                            <span className={`font-bold text-gray-800 dark:text-gray-200 text-sm group-hover:${isOtimizada ? 'text-emerald-500' : 'text-prosas-blue'}`}><i className="fas fa-bolt text-yellow-500 mr-2"></i>Econômica</span>
                                                             <span className="text-xs bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-2 py-0.5 rounded-full font-bold">~1k tokens</span>
                                                         </div>
                                                         <p className="text-xs text-gray-500 dark:text-gray-400">Gera um prompt curto e direto. Ideal para editais simples e para economizar tokens na análise.</p>
@@ -1850,7 +1881,7 @@ const App: React.FC = () => {
                                                         className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded transition-colors group"
                                                     >
                                                         <div className="flex items-center justify-between mb-1">
-                                                            <span className="font-bold text-gray-800 dark:text-gray-200 text-sm group-hover:text-prosas-blue"><i className="fas fa-balance-scale text-blue-500 mr-2"></i>Padrão</span>
+                                                            <span className={`font-bold text-gray-800 dark:text-gray-200 text-sm group-hover:${isOtimizada ? 'text-emerald-500' : 'text-prosas-blue'}`}><i className="fas fa-balance-scale text-blue-500 mr-2"></i>Padrão</span>
                                                             <span className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400 px-2 py-0.5 rounded-full font-bold">~2.5k tokens</span>
                                                         </div>
                                                         <p className="text-xs text-gray-500 dark:text-gray-400">Equilíbrio entre detalhamento e economia. Recomendado para a maioria dos editais.</p>
@@ -1863,7 +1894,7 @@ const App: React.FC = () => {
                                                         className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 rounded transition-colors group"
                                                     >
                                                         <div className="flex items-center justify-between mb-1">
-                                                            <span className="font-bold text-gray-800 dark:text-gray-200 text-sm group-hover:text-prosas-blue"><i className="fas fa-microscope text-purple-500 mr-2"></i>Especializada</span>
+                                                            <span className={`font-bold text-gray-800 dark:text-gray-200 text-sm group-hover:${isOtimizada ? 'text-emerald-500' : 'text-prosas-blue'}`}><i className="fas fa-microscope text-purple-500 mr-2"></i>Especializada</span>
                                                             <span className="text-xs bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400 px-2 py-0.5 rounded-full font-bold">~5k+ tokens</span>
                                                         </div>
                                                         <p className="text-xs text-gray-500 dark:text-gray-400">Máximo detalhamento, incluindo exceções e casos de borda. Para editais complexos e rigorosos.</p>
@@ -1878,7 +1909,7 @@ const App: React.FC = () => {
                         
                         <div className="relative">
                             <textarea 
-                                className="w-full h-96 p-6 text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-prosas-blue focus:bg-white dark:focus:bg-gray-800 outline-none resize-y leading-relaxed shadow-inner transition-colors duration-200"
+                                className={`w-full h-96 p-6 text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 ${colorsStyle.accentFocusRing} focus:bg-white dark:focus:bg-gray-800 outline-none resize-y leading-relaxed shadow-inner transition-colors duration-200`}
                                 value={context.criteriaText}
                                 onChange={(e) => setContext({...context, criteriaText: e.target.value})}
                                 spellCheck={false}
@@ -1909,7 +1940,7 @@ const App: React.FC = () => {
                               }}
                               disabled={!context.regulationText}
                               className={`font-bold py-3 px-8 rounded shadow hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 flex items-center gap-2 uppercase tracking-wide text-sm disabled:opacity-50 disabled:transform-none disabled:cursor-not-allowed ${
-                                  !context.regulationText ? 'bg-gray-300 text-gray-500' : 'bg-prosas-blue hover:bg-prosas-blueDark text-white'
+                                  !context.regulationText ? 'bg-gray-300 text-gray-500' : `${colorsStyle.accentBg} ${colorsStyle.accentBgHover} text-white`
                               }`}
                           >
                               Ir para Análise <i className="fas fa-arrow-right"></i>
@@ -1924,7 +1955,7 @@ const App: React.FC = () => {
                            onClick={() => setIsPromptVisible(!isPromptVisible)}
                        >
                            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-gray-400">
-                               <i className="fas fa-shield-alt text-prosas-blue"></i>
+                               <i className={`fas fa-shield-alt ${colorsStyle.accentText}`}></i>
                                <span>Barreira de Proteção da IA (Prompt Mestre)</span>
                            </div>
                            <i className={`fas fa-chevron-${isPromptVisible ? 'down' : 'up'} text-xs`}></i>
@@ -2080,7 +2111,7 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                               </button>
                               <button 
                                   onClick={handleSaveIdea}
-                                  className="bg-prosas-blue text-white px-6 py-2 rounded-lg font-bold shadow-sm hover:bg-prosas-blueDark transition-all"
+                                  className={`text-white px-6 py-2 rounded-lg font-bold shadow-sm transition-all ${colorsStyle.accentBg} ${colorsStyle.accentBgHover}`}
                               >
                                   Salvar Ideia
                               </button>
@@ -2163,13 +2194,13 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                                       onChange={(e) => setNewComment(e.target.value)}
                                       onKeyPress={(e) => e.key === 'Enter' && handleSaveComment(selectedIdea.id)}
                                       placeholder="Escreva um comentário..."
-                                      className="flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 text-sm focus:ring-2 focus:ring-prosas-blue outline-none text-gray-800 dark:text-white"
+                                      className={`flex-1 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg px-4 py-2 text-sm focus:ring-2 ${colorsStyle.accentFocusRing} outline-none text-gray-800 dark:text-white`}
                                       maxLength={2000}
                                   />
                                   <button 
                                       onClick={() => handleSaveComment(selectedIdea.id)}
                                       disabled={!newComment.trim()}
-                                      className="bg-prosas-blue text-white px-4 py-2 rounded-lg font-bold shadow-sm hover:bg-prosas-blueDark transition-all disabled:opacity-50"
+                                      className={`text-white px-4 py-2 rounded-lg font-bold shadow-sm transition-all disabled:opacity-50 ${colorsStyle.accentBg} ${colorsStyle.accentBgHover}`}
                                   >
                                       Enviar
                                   </button>

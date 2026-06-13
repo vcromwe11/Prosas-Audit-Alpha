@@ -218,6 +218,56 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                         <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${appSettings.theme === 'modern' ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
                 </div>
+
+                <div className="mt-8 pt-6 border-t border-gray-150 dark:border-gray-700">
+                    <h3 className="font-bold text-gray-800 dark:text-gray-200 mb-1 flex items-center gap-2 text-sm">
+                        <i className="fas fa-palette text-amber-500"></i> Temas Visuais (Modo de Customização Estilo IDE)
+                    </h3>
+                    <p className="text-xs text-gray-400 dark:text-gray-500 mb-4 leading-relaxed">
+                        Selecione paletas de cores experimentais adicionais para simular e experimentar a identidade visual da plataforma em diferentes ambientes (inspirado nas customizações de temas do RStudio ou Jupyter Notebook).
+                    </p>
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {[
+                          { id: 'classic', name: 'Azul Prosas (Default)', icon: 'fa-circle-nodes', bgGradient: 'from-blue-500 to-indigo-600', desc: 'Identidade azul clássica, clean e recomendada pela marca.' },
+                          { id: 'warm', name: 'Pôr do Sol Quente', icon: 'fa-sun', bgGradient: 'from-amber-550 to-orange-600', desc: 'Base de tons aconchegantes baseados em âmbar, sienna e terracota.' },
+                          { id: 'cool', name: 'Nórdico Glacial', icon: 'fa-snowflake', bgGradient: 'from-cyan-500 to-teal-600', desc: 'Paleta fria científica com tons de ciano, ardósia e oceano ártico.' },
+                          { id: 'mono', name: 'Brutalista Noir', icon: 'fa-moon', bgGradient: 'from-gray-800 to-black', desc: 'Visual minimalista editorial, de alto contraste e cinza puro.' }
+                        ].map((t) => {
+                            const isSelected = (appSettings.visualTheme || 'classic') === t.id;
+                            return (
+                                <button
+                                    key={t.id}
+                                    type="button"
+                                    onClick={() => setAppSettings((prev: any) => ({ ...prev, visualTheme: t.id }))}
+                                    className={`text-left p-4 rounded-lg border-2 transition-all flex items-start gap-3 relative ${
+                                        isSelected 
+                                        ? 'border-blue-500 dark:border-blue-400 bg-blue-50/10 dark:bg-blue-900/10 shadow-sm font-bold' 
+                                        : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 bg-transparent'
+                                    }`}
+                                >
+                                    <div className={`p-2 rounded bg-gradient-to-r ${t.bgGradient} text-white mt-0.5 shadow-sm flex items-center justify-center h-8 w-8`}>
+                                        <i className={`fas ${t.icon} text-sm text-center`}></i>
+                                    </div>
+                                    <div className="flex-1">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-bold text-xs text-gray-800 dark:text-gray-200">{t.name}</span>
+                                            {isSelected && (
+                                                <span className="text-[8px] tracking-wide font-black bg-blue-105 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 px-1 py-0.2 rounded border border-blue-200/50">ATIVO</span>
+                                            )}
+                                        </div>
+                                        <p className="text-[11px] text-gray-500 dark:text-gray-400 font-normal mt-1 leading-snug">{t.desc}</p>
+                                    </div>
+                                    {isSelected && (
+                                        <div className="absolute top-2 right-2 bg-blue-500 dark:bg-blue-400 text-white rounded-full w-4 h-4 flex items-center justify-center text-[8px] shadow">
+                                            <i className="fas fa-check"></i>
+                                        </div>
+                                    )}
+                                </button>
+                            );
+                        })}
+                    </div>
+                </div>
             </div>
 
             <div className="p-6">

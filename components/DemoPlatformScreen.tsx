@@ -1,8 +1,8 @@
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import { AppStage } from '../types';
-import { useAnalysis } from '../contexts/AnalysisContext';
-import { useAuth } from '../contexts/AuthContext';
+import { useAnalysis } from '../src/contexts/AnalysisContext';
+import { useAuth } from '../src/contexts/AuthContext';
 import ReportViewer from './ReportViewer';
 
 type DemoView = 'HOME' | 'EDITAIS_LIST' | 'EDITAL_PROJECTS' | 'PROJECT_DETAILS';

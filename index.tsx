@@ -3,9 +3,9 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './index.css';
 import { ErrorBoundary } from './src/components/ErrorBoundary';
-import { AuthProvider } from './contexts/AuthContext';
-import { UIProvider } from './contexts/UIContext';
-import { AnalysisProvider } from './contexts/AnalysisContext';
+import { AuthProvider } from './src/contexts/AuthContext';
+import { UIProvider } from './src/contexts/UIContext';
+import { AnalysisProvider } from './src/contexts/AnalysisContext';
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {

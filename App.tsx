@@ -5,10 +5,11 @@ import { CandidateAnalysis, AppStage, AuditContext, UserProfile, SavedReport, Id
 import { extractTextFromPdf } from './services/pdfService';
 import { extractPdfsFromZip } from './services/zipService';
 import { runDocumentAudit, generateCriteriaFromRegulation, generateAuthRulesFromRegulation, PromptGenerationMode } from './services/geminiService';
-import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribeToIdeas, saveIdea, saveComment, subscribeToComments, deleteIdea, deleteReport, savePrompt, getPrompt } from './services/storageService';
+import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribeToIdeas, saveIdea, saveComment, subscribeToComments, deleteIdea, deleteReport, savePrompt, getPrompt, migrateUserReports } from './services/storageService';
 import { PROMPTS } from './prompts';
 import { findBackupFile, uploadToDrive, downloadFromDrive } from './services/driveService';
 import { DEFAULT_DOCUMENT_CRITERIA } from './constants';
+import { RULE_TEMPLATES, scanFilesForRules } from './services/ruleTemplates';
 import ReportViewer from './components/ReportViewer';
 import ProjectCard from './components/ProjectCard';
 import { auth, googleProvider, db } from './firebase';
@@ -23,9 +24,6 @@ import { IdeasScreen } from './components/IdeasScreen';
 import UserManagementScreen from './components/UserManagementScreen';
 import { DemoPlatformScreen } from './components/DemoPlatformScreen';
 import { Tooltip } from './components/Tooltip';
-import { useAuth } from './contexts/AuthContext';
-import { useUI } from './contexts/UIContext';
-import { useAnalysis } from './contexts/AnalysisContext';
 
 // --- CONFIGURAÇÃO ---
 const GOOGLE_CLIENT_ID = "1061084015236-v7hsbbpn9vr4plou7t7k6i8v9eh3d4pq.apps.googleusercontent.com"; 
@@ -35,10 +33,8 @@ const CONTEXT_STORAGE_KEY = 'prosas_context_backup_v2'; // Alterado para v2 para
 declare const google: any;
 
 const App: React.FC = () => {
-  const { stage, setStage, previousStage, setPreviousStage, handleSetStage, loadingContext, setLoadingContext, isGeneratingCriteria, setIsGeneratingCriteria, context, setContext, candidates, setCandidates, allReports, setAllReports, groupedReports, setGroupedReports, selectedReport, setSelectedReport, reportToDelete, setReportToDelete, isInitialReportsLoad } = useAnalysis();
-  const { user, loading, email, setEmail, password, setPassword, isLoginMode, setIsLoginMode, authError, setAuthError, handleEmailAuth, handleGoogleAuth, handleLogout, driveToken, setDriveToken, driveStatus, setDriveStatus, driveMsg, setDriveMsg, connectDrive } = useAuth();
-  const { isDarkMode, setIsDarkMode, appSettings, setAppSettings, isSidebarCollapsed, setIsSidebarCollapsed, isIdeaModalOpen, setIsIdeaModalOpen, selectedIdea, setSelectedIdea, isDeleteModalOpen, setIsDeleteModalOpen, isExportMenuOpen, setIsExportMenuOpen, exportSuccessMsg, setExportSuccessMsg } = useUI();
-
+  const [stage, setStage] = useState<AppStage>(AppStage.LOGIN);
+  const [previousStage, setPreviousStage] = useState<AppStage>(AppStage.DASHBOARD);
   const [firebaseError, setFirebaseError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -55,7 +51,10 @@ const App: React.FC = () => {
     testConnection();
   }, []);
 
-  // handleSetStage moved to AnalysisContext
+  const handleSetStage = (newStage: AppStage) => {
+      setPreviousStage(stage);
+      setStage(newStage);
+  };
 
   // --- IDEAS HANDLERS ---
   const handleSaveIdea = async () => {
@@ -91,26 +90,96 @@ const App: React.FC = () => {
           }
       }
   };
-  // useAuth handles user state
+  const [user, setUser] = useState<UserProfile | null>(null);
   
   // Ideas State
   const [ideas, setIdeas] = useState<Idea[]>([]);
   const [newIdea, setNewIdea] = useState({ title: '', description: '' });
+  const [isIdeaModalOpen, setIsIdeaModalOpen] = useState(false);
+  const [selectedIdea, setSelectedIdea] = useState<Idea | null>(null);
   const [newComment, setNewComment] = useState('');
   const [ideaComments, setIdeaComments] = useState<Record<string, IdeaComment[]>>({});
 
-  // Auth state now in useAuth
+  // Auth State
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoginMode, setIsLoginMode] = useState(true);
+  const [authError, setAuthError] = useState('');
 
-  // Dark Mode handled by UIContext
+  // Dark Mode State
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('theme') === 'dark' || 
+        (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    }
+    return false;
+  });
+
+  // App Settings State
+  const [appSettings, setAppSettings] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('prosas_app_settings');
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          return { theme: 'classic', ...parsed };
+        } catch (e) {}
+      }
+    }
+    return {
+      isBoldText: false,
+      maxConcurrentSlots: 5,
+      autoSaveDrive: false,
+      compactMode: false,
+      theme: 'classic',
+      showTooltips: true
+    };
+  });
 
   const [analysisMode, setAnalysisMode] = useState<'IA_COMPLETA' | 'IA_OTIMIZADA'>('IA_COMPLETA');
+  const [isTemplatesPanelOpen, setIsTemplatesPanelOpen] = useState(false);
+  const [scannedSuggestions, setScannedSuggestions] = useState<any[]>([]);
+  const [isScanningFiles, setIsScanningFiles] = useState(false);
 
+  // Apply Settings
+  useEffect(() => {
+    localStorage.setItem('prosas_app_settings', JSON.stringify(appSettings));
+    if (appSettings.isBoldText) {
+      document.body.classList.add('font-medium');
+    } else {
+      document.body.classList.remove('font-medium');
+    }
+    if (appSettings.theme === 'modern') {
+      document.body.classList.add('theme-modern');
+    } else {
+      document.body.classList.remove('theme-modern');
+    }
+  }, [appSettings]);
+
+  // Drive State
+  const [driveToken, setDriveToken] = useState<string | null>(null);
+  const [driveStatus, setDriveStatus] = useState<'disconnected' | 'ready' | 'syncing' | 'error'>('disconnected');
+  const [driveMsg, setDriveMsg] = useState('');
+
+  // Sidebar State
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [isPromptVisible, setIsPromptVisible] = useState(false);
   const [isPromptMenuOpen, setIsPromptMenuOpen] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [selectedDashboardEdital, setSelectedDashboardEdital] = useState<string | null>(null);
   
+  // Search State
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Delete Confirmation State
+  const [reportToDelete, setReportToDelete] = useState<SavedReport | null>(null);
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+
+  // Storage & Reports
+  const [groupedReports, setGroupedReports] = useState<Record<string, SavedReport[]>>({});
+  const [allReports, setAllReports] = useState<SavedReport[]>([]);
+  const [selectedReport, setSelectedReport] = useState<SavedReport | null>(null);
+  const isInitialReportsLoad = useRef(true);
 
   const handleConfirmDelete = async () => {
     if (!reportToDelete) return;
@@ -147,10 +216,120 @@ const App: React.FC = () => {
     }
   }, [allReports, appSettings.autoSaveDrive, driveToken]);
 
+  // Analysis State
+  const [loadingContext, setLoadingContext] = useState(false);
+  const [isGeneratingCriteria, setIsGeneratingCriteria] = useState(false);
+  const [context, setContext] = useState<AuditContext>({
+    editalTitle: '',
+    regulationText: '',
+    formTemplateText: '',
+    miscFilesText: '',
+    criteriaText: DEFAULT_DOCUMENT_CRITERIA,
+    referenceDate: '',
+    authRules: [],
+    isReady: false
+  });
+  
+  // Alterado: Começa vazio para ser dinâmico
+  const [candidates, setCandidates] = useState<CandidateAnalysis[]>([]);
+
   // --- LIFECYCLE & PERSISTENCE ---
 
+  // 0. Dark Mode & Auth Listener
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (isDarkMode) {
+      root.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      root.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      if (currentUser) {
+        const { syncUserProfile } = await import('./services/storageService');
+        const profile = await syncUserProfile();
+        setUser(profile || {
+          uid: currentUser.uid,
+          name: currentUser.displayName || currentUser.email?.split('@')[0] || "Usuário",
+          email: currentUser.email || "",
+          avatarUrl: currentUser.photoURL || `https://ui-avatars.com/api/?name=${currentUser.email}&background=C13B2E&color=fff&size=128`,
+          role: 'viewer'
+        });
+        handleSetStage(AppStage.DASHBOARD);
+      } else {
+        setUser(null);
+        handleSetStage(AppStage.LOGIN);
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // 1. Load context from localStorage on startup
+  useEffect(() => {
+    const savedContext = localStorage.getItem(CONTEXT_STORAGE_KEY);
+    if (savedContext) {
+        try {
+            const parsed = JSON.parse(savedContext);
+            setContext(prev => ({ ...prev, ...parsed }));
+        } catch (e) {
+            console.error("Failed to load context backup", e);
+        }
+    }
+  }, []);
+
+  // 2. Save context changes to localStorage
+  useEffect(() => {
+      // Debounce saving to avoid hitting disk on every keystroke
+      const handler = setTimeout(() => {
+          if (context.regulationText || context.criteriaText !== DEFAULT_DOCUMENT_CRITERIA) {
+            localStorage.setItem(CONTEXT_STORAGE_KEY, JSON.stringify({
+                editalTitle: context.editalTitle,
+                regulationText: context.regulationText,
+                formTemplateText: context.formTemplateText,
+                miscFilesText: context.miscFilesText,
+                criteriaText: context.criteriaText
+            }));
+          }
+      }, 1000);
+      return () => clearTimeout(handler);
+  }, [context]);
+
+  // Subscribe to comments when an idea is selected
+  useEffect(() => {
+    if (selectedIdea) {
+      const unsubscribe = subscribeToComments(selectedIdea.id, (comments) => {
+        setIdeaComments(prev => ({
+          ...prev,
+          [selectedIdea.id]: comments
+        }));
+      });
+      return () => unsubscribe();
+    }
+  }, [selectedIdea]);
+
+  // 3. Prevent accidental tab close
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (candidates.some(c => c.status === 'analyzing' || c.status === 'pending')) {
+        e.preventDefault();
+        e.returnValue = ''; // Required for Chrome
+        return "Há análises em andamento ou pendentes. Se sair, perderá o progresso não salvo.";
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [candidates]);
+
+
+  // Load reports and ideas when user logs in
   useEffect(() => {
     if (user) {
+      migrateUserReports();
       const unsubscribeReports = subscribeToReports((grouped, all) => {
         setGroupedReports(grouped);
         setAllReports(all);
@@ -171,8 +350,39 @@ const App: React.FC = () => {
     }
   }, [user]);
 
-  const handleAppLogout = async () => {
-      await handleLogout();
+  const handleEmailAuth = async (e: React.FormEvent) => {
+      e.preventDefault();
+      setAuthError('');
+      try {
+          if (isLoginMode) {
+              await signInWithEmailAndPassword(auth, email, password);
+          } else {
+              await createUserWithEmailAndPassword(auth, email, password);
+          }
+      } catch (error: any) {
+          setAuthError(error.message || "Erro na autenticação.");
+      }
+  };
+
+  const handleGoogleAuth = async () => {
+      setAuthError('');
+      try {
+          const result = await signInWithPopup(auth, googleProvider);
+          const credential = GoogleAuthProvider.credentialFromResult(result);
+          if (credential && credential.accessToken) {
+              setDriveToken(credential.accessToken);
+              setDriveStatus('ready');
+              setDriveMsg('Conectado ao Drive');
+          }
+      } catch (error: any) {
+          setAuthError(error.message || "Erro no login com Google.");
+      }
+  };
+
+  const handleLogout = async () => {
+      await signOut(auth);
+      setDriveToken(null);
+      setDriveStatus('disconnected');
       setCandidates([]);
       setSelectedReport(null);
       setContext({
@@ -181,7 +391,6 @@ const App: React.FC = () => {
         formTemplateText: '',
         miscFilesText: '',
         criteriaText: DEFAULT_DOCUMENT_CRITERIA,
-        referenceDate: '',
         authRules: [],
         isReady: false
       });
@@ -189,6 +398,43 @@ const App: React.FC = () => {
   };
 
   // --- DRIVE HANDLERS ---
+  
+  const connectDrive = async () => {
+      try {
+          if (!auth.currentUser) return;
+          
+          let credential;
+          
+          // Verifica se já existe um provedor do Google vinculado
+          const isGoogleLinked = auth.currentUser.providerData.some(p => p.providerId === 'google.com');
+          
+          if (isGoogleLinked) {
+              // Se já for vinculado, apenas re-autentica para pegar o token novo do Drive
+              const result = await signInWithPopup(auth, googleProvider);
+              credential = GoogleAuthProvider.credentialFromResult(result);
+          } else {
+              // Se não for vinculado, faz o link, assim o usuário passará a logar também com Google
+              const result = await linkWithPopup(auth.currentUser, googleProvider);
+              credential = GoogleAuthProvider.credentialFromResult(result);
+          }
+
+          if (credential && credential.accessToken) {
+              setDriveToken(credential.accessToken);
+              setDriveStatus('ready');
+              setDriveMsg('Conectado ao Drive');
+          } else {
+              setDriveStatus('error');
+              setDriveMsg('Não foi possível obter a credencial do Drive.');
+          }
+      } catch (error: any) {
+          console.error("Erro ao conectar Google Drive:", error);
+          if (error.code === 'auth/credential-already-in-use') {
+              alert("Atenção: Esta conta Google já está cadastrada no sistema ou vinculada a outro usuário. Para acessar o Drive com esta conta, você deve fazer login diretamente através do Google na tela inicial.");
+          }
+          setDriveStatus('error');
+          setDriveMsg('Erro na autenticação.');
+      }
+  };
 
   const handleBackupToDrive = async () => {
       if (!driveToken) return;
@@ -422,9 +668,9 @@ const App: React.FC = () => {
         let filesForAi = [...candidate.files];
 
         // 1. Run Deterministic Auth if requested
-        if (withAuth && context.authRules.length > 0) {
+        if (withAuth && (context.authRules || []).length > 0) {
             const { runDeterministicAuth } = await import('./services/authEvaluator');
-            const authResult = await runDeterministicAuth(candidate.files, context.authRules, context.referenceDate, (msg) => {
+            const authResult = await runDeterministicAuth(candidate.files, context.authRules || [], context.referenceDate, (msg) => {
                 // Update specific slot progress to show the analyst what is being validated
                 setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, currentAuthTask: msg } : c));
             });
@@ -518,6 +764,15 @@ const App: React.FC = () => {
       return (
           <LoginScreen
             firebaseError={firebaseError}
+            authError={authError}
+            email={email}
+            setEmail={setEmail}
+            password={password}
+            setPassword={setPassword}
+            isLoginMode={isLoginMode}
+            setIsLoginMode={setIsLoginMode}
+            handleEmailAuth={handleEmailAuth}
+            handleGoogleAuth={handleGoogleAuth}
           />
       );
   }
@@ -746,7 +1001,7 @@ const App: React.FC = () => {
                   )}
               </div>
               <button 
-                  onClick={handleAppLogout}
+                  onClick={handleLogout}
                   className="w-full text-xs text-gray-500 hover:text-red-600 flex items-center justify-center gap-2 py-1"
                   title="Sair"
               >
@@ -1070,6 +1325,274 @@ const App: React.FC = () => {
                             </div>
                         </div>
                         
+                        {/* Painel de Automação, Modelos & Varredura */}
+                        <div className="mb-6 bg-slate-50 dark:bg-gray-800/50 p-5 rounded-lg border border-gray-150 dark:border-gray-700/60 transition-all">
+                            {/* Header do Painel */}
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 flex items-center justify-center bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 rounded-lg shadow-sm">
+                                        <i className="fas fa-cubes text-lg"></i>
+                                    </div>
+                                    <div>
+                                        <h3 className="text-sm font-bold text-gray-800 dark:text-gray-200">Painel de Automação de Documentos & Templates</h3>
+                                        <p className="text-xs text-gray-500 dark:text-gray-400">Biblioteca de regras pré-prontas (CNDs, CNPJ) e escaneamento inteligente de anexos.</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                    <button
+                                        onClick={() => setIsTemplatesPanelOpen(!isTemplatesPanelOpen)}
+                                        className="text-xs font-semibold bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600/80 px-3 py-1.5 rounded-md text-gray-700 dark:text-gray-200 flex items-center gap-2 transition-all shadow-xs cursor-pointer"
+                                    >
+                                        <i className={`fas ${isTemplatesPanelOpen ? 'fa-chevron-up text-blue-500' : 'fa-chevron-down text-blue-500'}`}></i>
+                                        {isTemplatesPanelOpen ? 'Ocultar Biblioteca' : 'Biblioteca de Modelos'}
+                                    </button>
+
+                                    <button
+                                        onClick={() => {
+                                            setIsScanningFiles(true);
+                                            setTimeout(() => {
+                                                const allFiles = candidates.flatMap(c => c.files || []);
+                                                const fileNames = allFiles.map(f => f.name);
+                                                
+                                                // Se não houver documentos do candidato carregados nos slots,
+                                                // emulamos arquivos típicos do candidato para garantir que a biblioteca possa ser testada brilhantemente
+                                                let targetNames = fileNames;
+                                                if (targetNames.length === 0) {
+                                                    targetNames = [
+                                                        'CARTAO_CNPJ_PROSAS.pdf',
+                                                        'cnd_receita_federal_2024.pdf',
+                                                        'fgts_crf_valido.pdf',
+                                                        'cndt_trabalhista_negativa.pdf',
+                                                        'certidao_recuperacao_judicial_falencia_assinado.pdf',
+                                                        'cnd_municipal_belo_horizonte.pdf'
+                                                    ];
+                                                }
+                                                
+                                                const suggestions = scanFilesForRules(targetNames);
+                                                setScannedSuggestions(suggestions);
+                                                setIsScanningFiles(false);
+                                                setIsTemplatesPanelOpen(true);
+                                            }, 800);
+                                        }}
+                                        disabled={isScanningFiles}
+                                        className="text-xs font-bold bg-indigo-50 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-400 dark:hover:bg-indigo-900/30 px-3 py-1.5 rounded-md flex items-center gap-2 transition-all border border-indigo-150 dark:border-indigo-900/40 disabled:opacity-50 cursor-pointer"
+                                    >
+                                        {isScanningFiles ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-search"></i>}
+                                        Varredura de Anexos
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Conteúdo Expansível */}
+                            {isTemplatesPanelOpen && (
+                                <div className="mt-4 pt-4 border-t border-gray-100 dark:border-gray-700/60">
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                                        
+                                        {/* Coluna da Esquerda: Biblioteca de Modelos */}
+                                        <div className="lg:col-span-8 border-r border-gray-100 dark:border-gray-700/60 pr-0 lg:pr-6">
+                                            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                                                <h4 className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Modelos Prontos de Certidões Brasileiras</h4>
+                                                <button
+                                                    onClick={() => {
+                                                        const currentTypes = (context.authRules || []).map(r => r.documentType.toLowerCase());
+                                                        const uniqueTemplates = RULE_TEMPLATES.filter(
+                                                            t => !currentTypes.includes(t.rule.documentType.toLowerCase())
+                                                        );
+
+                                                        if (uniqueTemplates.length === 0) {
+                                                            alert('Todos os modelos de certidões já foram incluídos!');
+                                                            return;
+                                                        }
+
+                                                        const newRulesToAdd = uniqueTemplates.map(t => ({
+                                                            ...t.rule,
+                                                            id: Math.random().toString(36).substring(7)
+                                                        }));
+
+                                                        setContext(prev => ({
+                                                            ...prev,
+                                                            authRules: [...(prev.authRules || []), ...newRulesToAdd]
+                                                        }));
+                                                    }}
+                                                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-1.5 cursor-pointer"
+                                                >
+                                                    <i className="fas fa-list-check"></i> Importar Todos os {RULE_TEMPLATES.length} Modelos
+                                                </button>
+                                            </div>
+
+                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-96 overflow-y-auto pr-1">
+                                                {RULE_TEMPLATES.map((tpl) => {
+                                                    const alreadyExists = (context.authRules || []).some(
+                                                        r => r.documentType.toLowerCase() === tpl.rule.documentType.toLowerCase()
+                                                    );
+                                                    return (
+                                                        <div 
+                                                            key={tpl.name}
+                                                            className={`p-3 rounded-md border text-left transition-all ${alreadyExists ? 'bg-emerald-50/40 dark:bg-emerald-950/10 border-emerald-150 dark:border-emerald-900/30' : 'bg-white dark:bg-gray-800 border-gray-150 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-650'}`}
+                                                        >
+                                                            <div className="flex items-center justify-between gap-2 mb-1">
+                                                                <span className="font-bold text-xs text-gray-800 dark:text-gray-100 flex items-center gap-1.5">
+                                                                    <i className={`fas ${
+                                                                        tpl.category === 'Cadastro' ? 'fa-id-card text-blue-500' :
+                                                                        tpl.category === 'Situação Jurídica' ? 'fa-scale-balanced text-purple-500' : 'fa-building-shield text-amber-500'
+                                                                    }`}></i>
+                                                                    {tpl.name}
+                                                                </span>
+                                                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 font-medium">
+                                                                    {tpl.category}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
+                                                                {tpl.description}
+                                                            </p>
+                                                            <div className="flex flex-col gap-1 mb-2.5">
+                                                                <div className="flex items-center justify-between text-[10px]">
+                                                                    <span className="text-gray-400 dark:text-gray-500">Regex de Captura:</span>
+                                                                    <code className="text-blue-500 dark:text-blue-400 font-mono text-[9px] bg-gray-50 dark:bg-gray-900 px-1 rounded truncate max-w-[150px]">{tpl.rule.formatRegex}</code>
+                                                                </div>
+                                                                <div className="flex items-center justify-between text-[10px]">
+                                                                    <span className="text-gray-400 dark:text-gray-500">JS Condição:</span>
+                                                                    <code className="text-green-600 dark:text-green-400 font-mono text-[9px] bg-gray-50 dark:bg-gray-900 px-1 rounded">{tpl.rule.validationRule}</code>
+                                                                </div>
+                                                            </div>
+
+                                                            <button
+                                                                onClick={() => {
+                                                                    if (alreadyExists) {
+                                                                        setContext(prev => ({
+                                                                            ...prev,
+                                                                            authRules: (prev.authRules || []).filter(r => r.documentType.toLowerCase() !== tpl.rule.documentType.toLowerCase())
+                                                                        }));
+                                                                    } else {
+                                                                        setContext(prev => ({
+                                                                            ...prev,
+                                                                            authRules: [...(prev.authRules || []), {
+                                                                                ...tpl.rule,
+                                                                                id: Math.random().toString(36).substring(7)
+                                                                            }]
+                                                                        }));
+                                                                    }
+                                                                }}
+                                                                className={`w-full text-center py-1.5 rounded text-xs font-bold transition-colors cursor-pointer ${
+                                                                    alreadyExists 
+                                                                        ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400' 
+                                                                        : 'bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-700 dark:hover:bg-indigo-600'
+                                                                }`}
+                                                            >
+                                                                {alreadyExists ? (
+                                                                    <span className="flex items-center justify-center gap-1"><i className="fas fa-check text-xs"></i> Ativado (Remover)</span>
+                                                                ) : (
+                                                                    <span>Ativar Modelo</span>
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        {/* Coluna da Direita: Varredora Inteligente de Arquivos */}
+                                        <div className="lg:col-span-4 pl-0 lg:pl-2">
+                                            <div className="flex items-center justify-between mb-3">
+                                                <h4 className="text-xs font-bold text-gray-700 dark:text-gray-300 uppercase tracking-wide">Matcher Sugestões de Anexos</h4>
+                                                {scannedSuggestions.length > 0 && (
+                                                    <button 
+                                                        onClick={() => setScannedSuggestions([])}
+                                                        className="text-[10px] text-gray-400 hover:text-gray-650"
+                                                    >
+                                                        Limpar
+                                                    </button>
+                                                )}
+                                            </div>
+
+                                            {scannedSuggestions.length === 0 ? (
+                                                <div className="p-5 bg-white dark:bg-gray-800 rounded-lg border border-gray-150 dark:border-gray-700/60 text-center flex flex-col items-center justify-center">
+                                                    <div className="w-12 h-12 rounded-full bg-slate-50 dark:bg-gray-700/50 flex items-center justify-center text-gray-400 dark:text-gray-500 mb-3 block">
+                                                        <i className="fas fa-wand-magic-sparkles text-lg"></i>
+                                                    </div>
+                                                    <p className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-1 leading-snug">Nenhuma varredura recente</p>
+                                                    <p className="text-[11px] text-gray-400 dark:text-gray-500 max-w-xs leading-normal">
+                                                        Clique em <span className="font-bold text-indigo-500">"Varredura de Anexos"</span> acima para ler os PDFs carregados (ou simular se vazio) e sugerir o conjunto ideal de regras para seus documentos!
+                                                    </p>
+                                                </div>
+                                            ) : (
+                                                <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                                                    <div className="p-2.5 bg-indigo-50/50 dark:bg-indigo-950/20 rounded border border-indigo-100/60 dark:border-indigo-900/30 text-[11px] text-indigo-750 dark:text-indigo-400 flex items-start gap-2 mb-2 leading-relaxed">
+                                                        <i className="fas fa-info-circle mt-0.5"></i>
+                                                        <span>Detectamos correspondências nos anexos! Clique nos botões abaixo para ativar os modelos ideais e agilizar seus testes:</span>
+                                                    </div>
+                                                    
+                                                    {scannedSuggestions.map((sug, i) => {
+                                                        const alreadyExists = (context.authRules || []).some(
+                                                            r => r.documentType.toLowerCase() === sug.template.rule.documentType.toLowerCase()
+                                                        );
+                                                        return (
+                                                            <div 
+                                                                key={`${sug.fileName}-${i}`}
+                                                                className="p-3 bg-white dark:bg-gray-800 rounded-md border border-gray-150 dark:border-gray-750 text-left"
+                                                            >
+                                                                <div className="flex items-center justify-between mb-1">
+                                                                    <span className="text-[10px] text-gray-500 dark:text-gray-400 truncate max-w-[150px] inline-block" title={sug.fileName}>
+                                                                        📄 {sug.fileName}
+                                                                    </span>
+                                                                    <span className="px-1 py-0.5 rounded text-[8px] font-bold bg-indigo-105 text-indigo-805 dark:bg-indigo-900 dark:text-indigo-300 uppercase tracking-wider">
+                                                                        {sug.confidence}
+                                                                    </span>
+                                                                </div>
+                                                                <div className="text-xs font-bold text-gray-850 dark:text-gray-200 mb-1">
+                                                                    Sugerido: {sug.suggestedTemplateName}
+                                                                </div>
+                                                                <p className="text-[10px] text-gray-400 dark:text-gray-500 mb-2 leading-relaxed">
+                                                                    {sug.reason}
+                                                                </p>
+
+                                                                <button
+                                                                    onClick={() => {
+                                                                        if (alreadyExists) {
+                                                                            setContext(prev => ({
+                                                                                ...prev,
+                                                                                authRules: (prev.authRules || []).filter(r => r.documentType.toLowerCase() !== sug.template.rule.documentType.toLowerCase())
+                                                                            }));
+                                                                        } else {
+                                                                            setContext(prev => ({
+                                                                                ...prev,
+                                                                                authRules: [...(prev.authRules || []), {
+                                                                                    ...sug.template.rule,
+                                                                                    id: Math.random().toString(36).substring(7)
+                                                                                }]
+                                                                            }));
+                                                                        }
+                                                                    }}
+                                                                    className={`w-full py-1.5 rounded text-[10px] font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                                                                        alreadyExists 
+                                                                            ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400 border border-emerald-100 dark:border-emerald-900/20' 
+                                                                            : 'bg-indigo-50 border border-indigo-200 hover:bg-indigo-100 text-indigo-700 dark:bg-indigo-950/40 dark:border-indigo-900/50 dark:text-indigo-400 dark:hover:bg-indigo-900/30'
+                                                                    }`}
+                                                                >
+                                                                    {alreadyExists ? (
+                                                                        <>
+                                                                            <i className="fas fa-check text-xs"></i>
+                                                                            Ativado
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <i className="fas fa-plus text-xs"></i>
+                                                                            Ativar Regra Sugerida
+                                                                        </>
+                                                                    )}
+                                                                </button>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
+
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        
                         <div className="overflow-x-auto">
                             <table className="w-full text-left border-collapse">
                                 <thead>
@@ -1085,7 +1608,7 @@ const App: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {context.authRules.map((rule, idx) => (
+                                    {(context.authRules || []).map((rule, idx) => (
                                         <tr key={rule.id} className="border-b border-gray-100 dark:border-gray-800 align-top">
                                             <td className="py-2 px-2">
                                                 <input 
@@ -1481,7 +2004,7 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                                     project={candidate} 
                                     index={index} 
                                     criteriaText={context.criteriaText} // PASSED HERE
-                                    hasAuthRules={context.authRules.length > 0}
+                                    hasAuthRules={(context.authRules || []).length > 0}
                                     onDelete={() => removeSlot(candidate.slotId)}
                                     onTrigger={() => triggerAnalysis(candidate.slotId, false)}
                                     onTriggerWithAuth={() => triggerAnalysis(candidate.slotId, true)}

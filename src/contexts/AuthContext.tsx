@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { UserProfile } from '../types';
-import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, linkWithPopup, browserPopupRedirectResolver } from 'firebase/auth';
-import { subscribeToUsers } from '../services/storageService';
+import { UserProfile } from '../../types';
+import { auth, googleProvider } from '../../firebase';
+import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, linkWithPopup } from 'firebase/auth';
+import { subscribeToUsers } from '../../services/storageService';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -19,7 +19,6 @@ interface AuthContextType {
   handleGoogleAuth: () => Promise<void>;
   handleLogout: () => Promise<void>;
   driveToken: string | null;
-  setDriveToken: (token: string | null) => void;
   driveStatus: 'disconnected' | 'ready' | 'syncing' | 'error';
   driveMsg: string;
   connectDrive: () => Promise<void>;
@@ -49,19 +48,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     
     const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
         if (firebaseUser) {
-            // Set an optimistic user immediately so the UI doesn't hang waiting for Firestore
-            setUser({
-                uid: firebaseUser.uid,
-                name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Usuário',
-                email: firebaseUser.email || '',
-                avatarUrl: firebaseUser.photoURL || `https://ui-avatars.com/api/?name=${firebaseUser.email?.split('@')[0] || 'User'}&background=C13B2E&color=fff&size=128`,
-                role: 'viewer' // Default role
-            });
-
             unsubscribeUsers = subscribeToUsers((users) => {
                 const appUser = users.find(u => u.uid === firebaseUser.uid);
                 if (appUser) {
                     setUser(appUser);
+                } else {
+                    setUser({
+                        uid: firebaseUser.uid,
+                        name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Usuário',
+                        email: firebaseUser.email || '',
+                        avatarUrl: firebaseUser.photoURL || '',
+                        role: 'viewer'
+                    });
                 }
             });
             // Try to restore Drive token from Google provider if returning
@@ -98,7 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const handleGoogleAuth = async () => {
       setAuthError('');
       try {
-          const result = await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
+          const result = await signInWithPopup(auth, googleProvider);
           const credential = GoogleAuthProvider.credentialFromResult(result);
           if (credential && credential.accessToken) {
               setDriveToken(credential.accessToken);
@@ -106,12 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               setDriveMsg('Conectado ao Drive');
           }
       } catch (error: any) {
-          console.error("Auth error:", error);
-          if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-popup-request') {
-              setAuthError('O pop-up de login foi bloqueado pelo navegador. Para entrar com Google, por favor, abra o aplicativo em uma nova guia (botão no topo direito da tela).');
-          } else {
-              setAuthError(error.message || "Erro no login com Google. Tente abrir o app em uma nova guia.");
-          }
+          setAuthError(error.message || "Erro no login com Google.");
       }
   };
 
@@ -131,7 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const isGoogleLinked = auth.currentUser.providerData.some(p => p.providerId === 'google.com');
           
           if (isGoogleLinked) {
-              const result = await signInWithPopup(auth, googleProvider, browserPopupRedirectResolver);
+              const result = await signInWithPopup(auth, googleProvider);
               credential = GoogleAuthProvider.credentialFromResult(result);
           } else {
               const result = await linkWithPopup(auth.currentUser, googleProvider);
@@ -150,8 +143,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.error("Erro ao conectar Google Drive:", error);
           if (error.code === 'auth/credential-already-in-use') {
               alert("Atenção: Esta conta Google já está cadastrada no sistema ou vinculada a outro usuário. Para acessar o Drive com esta conta, você deve fazer login diretamente através do Google na tela inicial.");
-          } else if (error.code === 'auth/popup-blocked' || error.code === 'auth/cancelled-popup-request') {
-              alert("O pop-up de login foi bloqueado. Por favor, abra o aplicativo em uma nova guia para conectar-se ao Drive.");
           }
           setDriveStatus('error');
           setDriveMsg('Erro na autenticação.');
@@ -163,7 +154,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       user, loading, email, setEmail, password, setPassword,
       isLoginMode, setIsLoginMode, authError, setAuthError,
       handleEmailAuth, handleGoogleAuth, handleLogout,
-      driveToken, setDriveToken, driveStatus, setDriveStatus, driveMsg, setDriveMsg, connectDrive
+      driveToken, driveStatus, setDriveStatus, driveMsg, setDriveMsg, connectDrive
     }}>
       {children}
     </AuthContext.Provider>

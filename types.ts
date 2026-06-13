@@ -86,6 +86,7 @@ export interface StoredPrompt {
 
 export interface SavedReport {
   id: string;
+  userId?: string;
   editalName: string;
   candidateName: string;
   cnpj: string;

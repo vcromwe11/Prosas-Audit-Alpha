@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import { PROMPTS } from '../prompts';
 import { GlobalPrompt, UserProfile, AppStage } from '../types';
 import { subscribeToGlobalPrompts, updateGlobalPrompt, updateUserProfile } from '../services/storageService';
-import { useAnalysis } from '../contexts/AnalysisContext';
+import { useAnalysis } from '../src/contexts/AnalysisContext';
 
 interface SettingsScreenProps {
   isDarkMode: boolean;

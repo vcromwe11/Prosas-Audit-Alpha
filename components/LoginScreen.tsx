@@ -1,25 +1,30 @@
 import React from 'react';
-import { useAuth } from '../contexts/AuthContext';
 
 interface LoginScreenProps {
   firebaseError: string | null;
+  authError: string;
+  email: string;
+  setEmail: (email: string) => void;
+  password: string;
+  setPassword: (password: string) => void;
+  isLoginMode: boolean;
+  setIsLoginMode: (isLoginMode: boolean) => void;
+  handleEmailAuth: (e: React.FormEvent) => void;
+  handleGoogleAuth: () => void;
 }
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   firebaseError,
+  authError,
+  email,
+  setEmail,
+  password,
+  setPassword,
+  isLoginMode,
+  setIsLoginMode,
+  handleEmailAuth,
+  handleGoogleAuth,
 }) => {
-  const {
-    authError,
-    email,
-    setEmail,
-    password,
-    setPassword,
-    isLoginMode,
-    setIsLoginMode,
-    handleEmailAuth,
-    handleGoogleAuth,
-  } = useAuth();
-  
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 p-4 transition-colors duration-200">
         <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-lg max-w-md w-full text-center border-t-4 border-prosas-red transition-colors duration-200">
@@ -78,14 +83,11 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
             <button 
               onClick={handleGoogleAuth}
               type="button"
-              className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-4 rounded flex items-center justify-center gap-3 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 mb-2"
+              className="w-full bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 font-bold py-3 px-4 rounded flex items-center justify-center gap-3 shadow-sm hover:shadow-md transform hover:-translate-y-0.5 active:scale-95 transition-all duration-200 mb-6"
             >
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
                 Continuar com Google
             </button>
-            <p className="text-xs text-gray-400 dark:text-gray-500 mb-6 px-4">
-                Se o pop-up não abrir, abra o aplicativo em uma nova guia para fazer login com Google.
-            </p>
             
             <p className="text-sm text-gray-600 dark:text-gray-400">
                 {isLoginMode ? "Não tem uma conta? " : "Já tem uma conta? "}

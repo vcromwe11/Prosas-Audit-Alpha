@@ -25,6 +25,78 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 }) => {
   const allReports = selectedDashboardEdital ? (groupedReports[selectedDashboardEdital] || []) : Object.values(groupedReports).flat();
 
+  const [sortKey, setSortKey] = React.useState<'candidateName' | 'editalName' | 'timestamp' | 'status' | 'default'>('default');
+  const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc' | 'default'>('default');
+
+  const handleSortClick = (field: 'candidateName' | 'editalName' | 'timestamp' | 'status') => {
+    if (sortKey === field) {
+      if (sortOrder === 'asc') {
+        setSortOrder('desc');
+      } else if (sortOrder === 'desc') {
+        setSortKey('default');
+        setSortOrder('default');
+      } else {
+        setSortOrder('asc');
+      }
+    } else {
+      setSortKey(field);
+      setSortOrder('asc');
+    }
+  };
+
+  const sortedReports = React.useMemo(() => {
+    const list = [...allReports];
+    
+    if (sortKey === 'default' || sortOrder === 'default') {
+      return list.sort((a, b) => b.timestamp - a.timestamp);
+    }
+    
+    return list.sort((a, b) => {
+      if (sortKey === 'candidateName') {
+        const valA = a.candidateName || '';
+        const valB = b.candidateName || '';
+        return sortOrder === 'asc' 
+          ? valA.localeCompare(valB, 'pt', { sensitivity: 'base' })
+          : valB.localeCompare(valA, 'pt', { sensitivity: 'base' });
+      }
+      
+      if (sortKey === 'editalName') {
+        const valA = a.editalName || '';
+        const valB = b.editalName || '';
+        return sortOrder === 'asc'
+          ? valA.localeCompare(valB, 'pt', { sensitivity: 'base' })
+          : valB.localeCompare(valA, 'pt', { sensitivity: 'base' });
+      }
+      
+      if (sortKey === 'timestamp') {
+        return sortOrder === 'asc'
+          ? a.timestamp - b.timestamp
+          : b.timestamp - a.timestamp;
+      }
+      
+      if (sortKey === 'status') {
+        const statusA = a.manualStatus || a.result.overallStatus || '';
+        const statusB = b.manualStatus || b.result.overallStatus || '';
+        return sortOrder === 'asc'
+          ? statusA.localeCompare(statusB, 'pt', { sensitivity: 'base' })
+          : statusB.localeCompare(statusA, 'pt', { sensitivity: 'base' });
+      }
+      
+      return 0;
+    });
+  }, [allReports, sortKey, sortOrder]);
+
+  const renderSortIcon = (field: 'candidateName' | 'editalName' | 'timestamp' | 'status') => {
+    if (sortKey === field) {
+      if (sortOrder === 'asc') {
+        return <i className="fas fa-sort-up ml-1.5 text-prosas-blue"></i>;
+      } else if (sortOrder === 'desc') {
+        return <i className="fas fa-sort-down ml-1.5 text-prosas-blue"></i>;
+      }
+    }
+    return <i className="fas fa-sort ml-1.5 text-gray-300 dark:text-gray-600 opacity-40 group-hover:opacity-100 transition-opacity"></i>;
+  };
+
   return (
     <motion.div
         key="dashboard"
@@ -68,15 +140,47 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
             <table className="w-full text-left text-sm text-gray-600 dark:text-gray-300">
                 <thead className="bg-gray-50 dark:bg-gray-700/50 border-b border-gray-200 dark:border-gray-700 text-xs uppercase font-bold text-gray-500 dark:text-gray-400 transition-colors duration-200">
                     <tr>
-                        <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Organização</th>
-                        <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Edital</th>
-                        <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Data</th>
-                        <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>Status</th>
+                        <th 
+                            className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 group transition-colors duration-200`}
+                            onClick={() => handleSortClick('candidateName')}
+                        >
+                            <div className="flex items-center gap-1">
+                                <span>Organização</span>
+                                {renderSortIcon('candidateName')}
+                            </div>
+                        </th>
+                        <th 
+                            className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 group transition-colors duration-200`}
+                            onClick={() => handleSortClick('editalName')}
+                        >
+                            <div className="flex items-center gap-1">
+                                <span>Edital</span>
+                                {renderSortIcon('editalName')}
+                            </div>
+                        </th>
+                        <th 
+                            className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 group transition-colors duration-200`}
+                            onClick={() => handleSortClick('timestamp')}
+                        >
+                            <div className="flex items-center gap-1">
+                                <span>Data</span>
+                                {renderSortIcon('timestamp')}
+                            </div>
+                        </th>
+                        <th 
+                            className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 group transition-colors duration-200`}
+                            onClick={() => handleSortClick('status')}
+                        >
+                            <div className="flex items-center gap-1">
+                                <span>Status</span>
+                                {renderSortIcon('status')}
+                            </div>
+                        </th>
                         <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}></th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                    {allReports.sort((a,b) => b.timestamp - a.timestamp).map(report => (
+                    {sortedReports.map(report => (
                         <tr key={report.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer" onClick={() => { setSelectedReport(report); handleSetStage(AppStage.REPORT_VIEW); }}>
                             <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} font-medium text-gray-800 dark:text-gray-100`}>{report.candidateName}</td>
                             <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>{report.editalName}</td>

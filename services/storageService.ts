@@ -248,6 +248,7 @@ export const saveReport = async (editalName: string, result: AuditResult, prompt
   
   const newReport: SavedReport = {
     id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+    userId: userId,
     editalName: editalName || "Edital Geral",
     candidateName: result.candidateName || "Candidato Desconhecido",
     cnpj: result.organizationData?.cnpj || "N/A",
@@ -256,7 +257,7 @@ export const saveReport = async (editalName: string, result: AuditResult, prompt
     promptId: promptId
   };
 
-  const path = `users/${userId}/reports`;
+  const path = `reports`;
   try {
     const docRef = doc(db, path, newReport.id);
     const dataToSave: any = {
@@ -274,10 +275,54 @@ export const saveReport = async (editalName: string, result: AuditResult, prompt
   }
 };
 
+export const migrateUserReports = async () => {
+  if (!auth.currentUser) return;
+  const userId = auth.currentUser.uid;
+  const legacyPath = `users/${userId}/reports`;
+  
+  try {
+    let snapshot;
+    try {
+      console.log(`[Migration] Reading from legacy path: ${legacyPath}`);
+      snapshot = await getDocs(query(collection(db, legacyPath)));
+      console.log(`[Migration] Successfully read legacy reports. Found records: ${snapshot.size}`);
+    } catch (readError) {
+      console.error('[Migration Error] Failed to read legacy reports:', readError);
+      return;
+    }
+
+    if (!snapshot.empty) {
+      console.log(`[Migration] Initiating batch update for ${snapshot.size} legacy reports...`);
+      const batch = writeBatch(db);
+      
+      snapshot.forEach(docSnap => {
+        const data = docSnap.data();
+        const newRef = doc(db, 'reports', docSnap.id);
+        const dataToSave = {
+          ...data,
+          userId: userId // Force override with current user's authenticated ID to ensure permissions check passes
+        };
+        batch.set(newRef, dataToSave);
+        batch.delete(docSnap.ref);
+      });
+      
+      try {
+        await batch.commit();
+        console.log('[Migration] Legacy reports batch write/delete migration complete.');
+      } catch (writeError) {
+        console.error('[Migration Error] Failed during batch commit:', writeError);
+      }
+    } else {
+      console.log('[Migration] No legacy reports to migrate.');
+    }
+  } catch (error) {
+    console.error('[Migration Error] Unknown error in migration:', error);
+  }
+};
+
 export const subscribeToReports = (callback: (groupedReports: Record<string, SavedReport[]>, allReports: SavedReport[]) => void) => {
   if (!auth.currentUser) return () => {};
-  const userId = auth.currentUser.uid;
-  const path = `users/${userId}/reports`;
+  const path = `reports`;
   
   const q = query(collection(db, path));
   
@@ -316,8 +361,7 @@ export const subscribeToReports = (callback: (groupedReports: Record<string, Sav
 
 export const deleteReport = async (id: string) => {
   if (!auth.currentUser) return;
-  const userId = auth.currentUser.uid;
-  const path = `users/${userId}/reports/${id}`;
+  const path = `reports/${id}`;
   try {
     await deleteDoc(doc(db, path));
   } catch (error) {
@@ -327,14 +371,13 @@ export const deleteReport = async (id: string) => {
 
 export const updateReport = async (report: SavedReport) => {
   if (!auth.currentUser) return;
-  const userId = auth.currentUser.uid;
-  const path = `users/${userId}/reports`;
+  const path = `reports`;
   try {
     const docRef = doc(db, path, report.id);
     
     const dataToSave: any = {
       ...report,
-      userId: userId,
+      userId: report.userId || auth.currentUser.uid,
       result: JSON.stringify(report.result)
     };
     
@@ -493,7 +536,7 @@ export const adminCreateUser = async (profile: Partial<UserProfile>) => {
 export const saveAllReports = async (reports: SavedReport[]) => {
   if (!auth.currentUser) return;
   const userId = auth.currentUser.uid;
-  const path = `users/${userId}/reports`;
+  const path = `reports`;
   
   try {
     const batch = writeBatch(db);
@@ -501,7 +544,7 @@ export const saveAllReports = async (reports: SavedReport[]) => {
       const docRef = doc(db, path, report.id);
       const dataToSave: any = {
         ...report,
-        userId: userId,
+        userId: report.userId || userId,
         result: JSON.stringify(report.result)
       };
       if (dataToSave.manualStatus === undefined) delete dataToSave.manualStatus;

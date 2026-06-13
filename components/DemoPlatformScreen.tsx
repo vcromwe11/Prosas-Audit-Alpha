@@ -610,7 +610,7 @@ export const DemoPlatformScreen: React.FC<{
                 <div className="flex items-center gap-4">
                     <button 
                         onClick={handleExitDemo}
-                        className="bg-white dark:bg-gray-800/20 hover:bg-white dark:bg-gray-800/30 text-white px-3 py-1 rounded text-xs font-bold transition-colors flex items-center gap-2"
+                        className="bg-white/10 hover:bg-white/25 text-white px-3 py-1.5 rounded text-xs font-bold transition-colors flex items-center gap-2"
                     >
                         <i className="fas fa-arrow-left"></i> Sair do Modo Demo
                     </button>

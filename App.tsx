@@ -167,23 +167,29 @@ const App: React.FC = () => {
     } else {
       document.body.classList.remove('font-medium');
     }
-    if (appSettings.theme === 'modern') {
-      document.body.classList.add('theme-modern');
-    } else {
-      document.body.classList.remove('theme-modern');
-    }
 
-    // Apply exact visual theme class overrides on document.body
-    document.body.classList.remove('theme-warm', 'theme-cool', 'theme-mono');
-    const visualThemeKey = appSettings.visualTheme || 'classic';
-    if (visualThemeKey === 'warm') {
-      document.body.classList.add('theme-warm');
-    } else if (visualThemeKey === 'cool') {
-      document.body.classList.add('theme-cool');
-    } else if (visualThemeKey === 'mono') {
-      document.body.classList.add('theme-mono');
+    // In Demo Mode, do not apply any theme overrides (modern, warm, cool, mono should be bypassed)
+    if (stage === AppStage.DEMO_PLATFORM) {
+      document.body.classList.remove('theme-modern', 'theme-warm', 'theme-cool', 'theme-mono');
+    } else {
+      if (appSettings.theme === 'modern') {
+        document.body.classList.add('theme-modern');
+      } else {
+        document.body.classList.remove('theme-modern');
+      }
+
+      // Apply exact visual theme class overrides on document.body
+      document.body.classList.remove('theme-warm', 'theme-cool', 'theme-mono');
+      const visualThemeKey = appSettings.visualTheme || 'classic';
+      if (visualThemeKey === 'warm') {
+        document.body.classList.add('theme-warm');
+      } else if (visualThemeKey === 'cool') {
+        document.body.classList.add('theme-cool');
+      } else if (visualThemeKey === 'mono') {
+        document.body.classList.add('theme-mono');
+      }
     }
-  }, [appSettings]);
+  }, [appSettings, stage]);
 
   // Drive State
   const [driveToken, setDriveToken] = useState<string | null>(null);

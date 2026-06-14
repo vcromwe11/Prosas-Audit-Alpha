@@ -36,6 +36,9 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
           const [uploadProgress, setUploadProgress] = useState(0);
 
   const [movingFileId, setMovingFileId] = useState<string | null>(null);
+  
+  const [folderToDelete, setFolderToDelete] = useState<RepositoryFolder | null>(null);
+  const [fileToDelete, setFileToDelete] = useState<RepositoryFile | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
@@ -62,19 +65,36 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
     setIsCreatingFolder(false);
   };
 
-  const handleDeleteFolder = async (folder: RepositoryFolder) => {
+  const handleDeleteFolder = (folder: RepositoryFolder) => {
     if (!checkPermission('mutate_data')) {
         alert('Sem permissão.');
         return;
     }
-    if (window.confirm(`Tem certeza que deseja deletar a pasta "${folder.name}" e todo o seu conteúdo? (Nota: os arquivos precisam ser apagados caso haja limitações de storage).`)) {
-      if (selectedFolder?.id === folder.id) setSelectedFolder(null);
-      try {
-        await deleteRepositoryFolder(folder.id);
-      } catch (e: any) {
-        console.error(e);
-        alert(`Erro ao deletar pasta: ${e.message}`);
-      }
+    setFolderToDelete(folder);
+  };
+
+  const confirmDeleteFolder = async () => {
+    if (!folderToDelete) return;
+    
+    const folder = folderToDelete;
+    setFolderToDelete(null);
+
+    const isDescendant = (childId: string | null | undefined): boolean => {
+        if (!childId) return false;
+        if (childId === folder.id) return true;
+        const childFolder = folders.find(f => f.id === childId);
+        return childFolder ? isDescendant(childFolder.parentId) : false;
+    };
+
+    if (isDescendant(selectedFolder?.id)) {
+        setSelectedFolder(null);
+    }
+
+    try {
+      await deleteRepositoryFolder(folder.id);
+    } catch (e: any) {
+      console.error(e);
+      alert(`Erro ao deletar pasta: ${e.message}`);
     }
   };
 
@@ -155,14 +175,19 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
       if(event.target) event.target.value = '';
     };
   
-    const handleDeleteFile = async (file: RepositoryFile) => {
+    const handleDeleteFile = (file: RepositoryFile) => {
       if (!checkPermission('mutate_data')) {
           alert('Sem permissão.');
           return;
       }
-      if (window.confirm(`Tem certeza que deseja deletar o arquivo "${file.name}"?`)) {
-        await deleteRepositoryFile(file);
-      }
+      setFileToDelete(file);
+    };
+
+    const confirmDeleteFile = async () => {
+      if (!fileToDelete) return;
+      const file = fileToDelete;
+      setFileToDelete(null);
+      await deleteRepositoryFile(file);
     };
 
     const handleMoveFile = async (fileId: string, folderId: string) => {
@@ -230,6 +255,36 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                 )}
 
                 <div className="p-2 space-y-1">
+                    <div 
+                        className={`group flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${!selectedFolder ? 'bg-blue-50 dark:bg-blue-900/40 border border-blue-100 dark:border-blue-800' : 'hover:bg-gray-50 dark:hover:bg-gray-800 border border-transparent'}`}
+                        onClick={() => setSelectedFolder(null)}
+                        onDragOver={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.currentTarget.classList.add('bg-blue-100', 'dark:bg-blue-900/60');
+                            e.currentTarget.classList.remove('border-transparent');
+                        }}
+                        onDragLeave={(e) => {
+                            e.currentTarget.classList.remove('bg-blue-100', 'dark:bg-blue-900/60');
+                        }}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            e.currentTarget.classList.remove('bg-blue-100', 'dark:bg-blue-900/60');
+                            
+                            const fileId = e.dataTransfer.getData('text/plain');
+                            if (fileId) {
+                                handleMoveFile(fileId, ''); // Using empty string to represent root in Firebase
+                            } else if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                handleFileUpload({ target: { files: e.dataTransfer.files } }, null);
+                            }
+                        }}
+                    >
+                        <div className="flex items-center gap-2 overflow-hidden">
+                            <i className="fas fa-home text-gray-500 dark:text-gray-400"></i>
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300 truncate">Raiz</span>
+                        </div>
+                    </div>
                     {(() => {
                         const rootFolders = folders.filter(f => !f.parentId);
                         
@@ -458,6 +513,67 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                     </>
             </div>
         </div>
+
+        {/* Delete Folder Modal */}
+        {folderToDelete && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6 text-slate-800 dark:text-gray-200">
+                    <h3 className="text-xl font-bold mb-4 text-red-600 dark:text-red-400">
+                        <i className="fas fa-exclamation-triangle mr-2"></i> Excluir Pasta
+                    </h3>
+                    <p className="mb-4">
+                        Tem certeza que deseja deletar a pasta <strong>"{folderToDelete.name}"</strong> e todo o seu conteúdo?
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-6 font-medium">
+                        Atenção: Todos os arquivos e subpastas dentro dela também serão permanentemente apagados. Esta ação não pode ser desfeita.
+                    </p>
+                    <div className="flex justify-end gap-3">
+                        <button 
+                            onClick={() => setFolderToDelete(null)}
+                            className="px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded text-sm transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            onClick={confirmDeleteFolder}
+                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm shadow-sm transition-colors"
+                        >
+                            <i className="fas fa-trash mr-2"></i> Sim, excluir
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
+        {/* Delete File Modal */}
+        {fileToDelete && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full p-6 text-slate-800 dark:text-gray-200">
+                    <h3 className="text-xl font-bold mb-4 text-red-600 dark:text-red-400">
+                        <i className="fas fa-exclamation-triangle mr-2"></i> Excluir Arquivo
+                    </h3>
+                    <p className="mb-6">
+                        Tem certeza que deseja deletar o arquivo <strong>"{fileToDelete.name}"</strong>?
+                        Esta ação não pode ser desfeita.
+                    </p>
+                    <div className="flex justify-end gap-3">
+                        <button 
+                            onClick={() => setFileToDelete(null)}
+                            className="px-4 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded text-sm transition-colors"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            onClick={confirmDeleteFile}
+                            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded text-sm shadow-sm transition-colors"
+                        >
+                            <i className="fas fa-trash mr-2"></i> Sim, excluir
+                        </button>
+                    </div>
+                </div>
+            </div>
+        )}
+
     </motion.div>
   );
 };

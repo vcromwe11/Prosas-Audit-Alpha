@@ -792,18 +792,12 @@ export const deleteRepositoryFolder = async (folderId: string) => {
     const filesSnapshot = await getDocs(filesQuery);
     
     const fileDeletePromises = filesSnapshot.docs.map(async (docSnapshot) => {
-      const fileData = docSnapshot.data() as RepositoryFile;
-      // Delete from storage
-      if (fileData.storagePath) {
-        const fileRef = ref(storage, fileData.storagePath);
-        try {
-          await deleteObject(fileRef);
-        } catch (e) {
-          console.warn("Storage item might already be deleted", e);
-        }
+      const fileData = { id: docSnapshot.id, ...docSnapshot.data() } as RepositoryFile;
+      try {
+         await deleteRepositoryFile(fileData);
+      } catch (e) {
+         console.warn("Failed to delete file inside folder", e);
       }
-      // Delete from firestore
-      await deleteDoc(docSnapshot.ref);
     });
     await Promise.all(fileDeletePromises);
 
@@ -811,8 +805,12 @@ export const deleteRepositoryFolder = async (folderId: string) => {
     const subfoldersQuery = query(collection(db, 'repository_folders'), where('parentId', '==', folderId));
     const subfoldersSnapshot = await getDocs(subfoldersQuery);
     
-    const subfolderDeletePromises = subfoldersSnapshot.docs.map(docSnapshot => {
-      return deleteRepositoryFolder(docSnapshot.id);
+    const subfolderDeletePromises = subfoldersSnapshot.docs.map(async docSnapshot => {
+      try {
+         await deleteRepositoryFolder(docSnapshot.id);
+      } catch (e) {
+         console.warn("Failed to delete subfolder", e);
+      }
     });
     await Promise.all(subfolderDeletePromises);
 
@@ -827,8 +825,14 @@ export const deleteRepositoryFolder = async (folderId: string) => {
 // --- Repository Files ---
 export const subscribeToRepositoryFiles = (folderId: string | null, callback: (files: RepositoryFile[]) => void) => {
   const path = `repository_files`;
-  // Querying for folderId (empty string if root)
-  const q = query(collection(db, path), where('folderId', '==', folderId || ''));
+  
+  // Use 'in' to check for both strictly null and empty string if we're at root
+  let q;
+  if (!folderId) {
+     q = query(collection(db, path), where('folderId', 'in', [null, '']));
+  } else {
+     q = query(collection(db, path), where('folderId', '==', folderId));
+  }
   
   const filesMap = new Map<string, RepositoryFile>();
 
@@ -862,14 +866,17 @@ export const uploadRepositoryFile = async (folderId: string | null, file: File, 
     reader.onload = async () => {
       try {
         const base64Data = (reader.result as string).split(',')[1];
-        const chunkSize = 500000;
+        const chunkSize = 250000; // 250KB per chunk to be safely under 1MB even with overhead
         const chunksCount = Math.ceil(base64Data.length / chunkSize);
         
         for (let i = 0; i < chunksCount; i++) {
           const chunkData = base64Data.substring(i * chunkSize, (i + 1) * chunkSize);
           const chunkPath = `repository_files/${fileId}/chunks/chunk_${i}`;
           try {
+             // Added await with simple Promise wrapper to ensure event loop ticks
+             await new Promise(r => setTimeout(r, 10));
              await setDoc(doc(db, chunkPath), { data: chunkData });
+             console.log(`Uploaded chunk ${i+1}/${chunksCount}`);
           } catch(err) {
              console.error("Error setting chunk doc:", chunkPath, err);
              throw err;

@@ -2,8 +2,8 @@ import * as pdfjsLib from 'pdfjs-dist';
 import mammoth from 'mammoth';
 import { PdfPage } from '../types';
 
-// Set the worker source for pdfjs-dist
-pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+// pdfjsLib.version is sometimes undefined in ESM, causing the worker script to 404 and hang. Hardcode the version matching package.json.
+pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@5.4.449/build/pdf.worker.min.mjs`;
 
 /**
  * Converts a File object to a Base64 string.
@@ -56,36 +56,6 @@ async function processInBatches<T, R>(
   return results;
 }
 
-/**
- * Extracts text from multiple files, adding headers to identify the source file.
- * This is crucial for the AI to distinguish between the "Bylaws" and the "Project Form".
- * Processes in batches to optimize memory (Lazy Loading).
- */
-export const extractTextFromMultipleFiles = async (files: File[]): Promise<string> => {
-  const texts = await processInBatches(files, 3, async (file) => {
-    try {
-      let fileText = "";
-      if (file.name.toLowerCase().endsWith('.txt')) {
-        fileText = await file.text();
-      } else if (file.name.toLowerCase().endsWith('.docx')) {
-        const arrayBuffer = await file.arrayBuffer();
-        const result = await mammoth.extractRawText({ arrayBuffer });
-        fileText = result.value;
-      } else {
-        const pages = await processPdfFile(file);
-        fileText = pages.map(p => p.text).join('\n');
-      }
-      
-      return `\n\n=== INÍCIO DO ARQUIVO: ${file.name} ===\n${fileText}\n=== FIM DO ARQUIVO: ${file.name} ===\n`;
-    } catch (error) {
-      console.error(`Error processing file ${file.name}:`, error);
-      return `\n\n[ERRO AO LER O ARQUIVO: ${file.name}]\n\n`;
-    }
-  });
-
-  return texts.join("");
-};
-
 const processPdfFile = async (file: File): Promise<PdfPage[]> => {
   // Use ObjectURL for Lazy Loading instead of loading entire ArrayBuffer to RAM
   const fileUrl = URL.createObjectURL(file);
@@ -131,4 +101,21 @@ const processPdfFile = async (file: File): Promise<PdfPage[]> => {
     // Release the generic blob URL to free memory
     URL.revokeObjectURL(fileUrl);
   }
+};
+
+/**
+ * Extracts text from multiple files, adding headers to identify the source file.
+ */
+export const extractTextFromMultipleFiles = async (files: File[]): Promise<string> => {
+  const texts = await processInBatches(files, 3, async (file) => {
+    try {
+      const fileText = await extractTextFromPdf(file);
+      return `\n\n=== INÍCIO DO ARQUIVO: ${file.name} ===\n${fileText}\n=== FIM DO ARQUIVO: ${file.name} ===\n`;
+    } catch (error) {
+      console.error(`Error processing file ${file.name}:`, error);
+      return `\n\n[ERRO AO LER O ARQUIVO: ${file.name}]\n\n`;
+    }
+  });
+
+  return texts.join("");
 };

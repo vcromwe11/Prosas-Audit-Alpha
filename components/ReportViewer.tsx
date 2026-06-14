@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { SavedReport, AnalysisPoint } from '../types';
 import html2pdf from 'html2pdf.js';
-import { getPrompt } from '../services/storageService';
+import { getPrompt, getReportResult } from '../services/storageService';
 
 export interface Props {
   report: SavedReport;
@@ -83,7 +83,8 @@ const AccordionItem: React.FC<{ point: AnalysisPoint, forceOpen?: boolean }> = (
 };
 
 const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpdateReport, userRole, userName, isDemoMode }) => {
-  const { result } = report;
+  const [result, setResult] = useState(report.result);
+  const [isLoadingResult, setIsLoadingResult] = useState(!report.result && !isDemoMode);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
   const [isManualEvalOpen, setIsManualEvalOpen] = useState(false);
   
@@ -92,6 +93,30 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
   const [draftNotes, setDraftNotes] = useState(report.userNotes || '');
   const [promptText, setPromptText] = useState<string | null>(null);
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(false);
+
+  useEffect(() => {
+    const fetchLazyData = async () => {
+      if (!result && !isDemoMode) {
+        setIsLoadingResult(true);
+        const fetchedResult = await getReportResult(report.id);
+        if (fetchedResult) {
+          setResult(fetchedResult);
+        }
+        setIsLoadingResult(false);
+      }
+    };
+    fetchLazyData();
+  }, [report.id, result, isDemoMode]);
+
+  if (isLoadingResult) {
+    return (
+      <div className="flex flex-col items-center justify-center p-12 bg-white rounded-lg shadow-sm max-w-2xl mx-auto mt-10 border border-gray-200">
+        <i className="fas fa-circle-notch fa-spin text-4xl text-prosas-blue mb-4"></i>
+        <h2 className="text-lg font-bold text-gray-800">Decodificando Relatório...</h2>
+        <p className="mt-2 text-sm text-gray-500">Recuperando o volume de dados densos...</p>
+      </div>
+    );
+  }
 
   if (!result || typeof result !== 'object' || !result.organizationData) {
     return (

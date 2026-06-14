@@ -105,7 +105,8 @@ export const runDocumentAudit = async (
     criteria: string,
     candidateFiles: File[],
     authRules: DocumentAuthRule[] = [],
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onProgress?: (text: string) => void
 ): Promise<{ result: AuditResult, promptText: string }> => {
     const ai = getClient();
     // UPGRADE: Utilizando o modelo Pro para maior capacidade de raciocínio (Thinking)
@@ -120,9 +121,14 @@ export const runDocumentAudit = async (
         if (signal?.aborted) throw new Error("AbortError");
         try {
             const base64Data = await fileToBase64(file);
+            let mimeType = file.type || "application/pdf";
+            if (!file.type) {
+                if (file.name.endsWith('.docx')) mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+                else if (file.name.endsWith('.txt')) mimeType = "text/plain";
+            }
             return [
                 { text: `\n\n=== INÍCIO DO ARQUIVO DO CANDIDATO: "${file.name}" ===\n(O conteúdo binário a seguir pertence a este arquivo)\n` },
-                { inlineData: { data: base64Data, mimeType: "application/pdf" } }
+                { inlineData: { data: base64Data, mimeType: mimeType } }
             ];
         } catch (err) {
             console.error(`Erro ao processar arquivo para envio: ${file.name}`, err);
@@ -145,7 +151,7 @@ export const runDocumentAudit = async (
         .replace('{{miscFiles}}', sanitizeText(miscFiles) ? sanitizeText(miscFiles) : 'N/A')
         .replace('{{criteria}}', criteria);
 
-    const jsonString = await generateContentWithSmartRetry(ai, model, parts, systemInstructionText, 3, 8000, signal);
+    const jsonString = await generateContentWithSmartRetry(ai, model, parts, systemInstructionText, 3, 8000, signal, onProgress);
     
     const fullPromptText = `INSTRUÇÕES DO SISTEMA:\n${systemInstructionText}\n\nPROMPT DO USUÁRIO:\n${userTaskPromptText}`;
 
@@ -159,7 +165,7 @@ export const runDocumentAudit = async (
 };
 
 /**
- * Lógica de Retry Otimizada
+ * Lógica de Retry Otimizada com Streaming
  */
 const generateContentWithSmartRetry = async (
     ai: GoogleGenAI, 
@@ -168,30 +174,62 @@ const generateContentWithSmartRetry = async (
     systemInstruction: string,
     retries = 3, 
     baseDelay = 8000,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    onProgress?: (text: string) => void
 ): Promise<string> => {
     for (let i = 0; i < retries; i++) {
         if (signal?.aborted) throw new Error("AbortError");
         try {
-            const generatePromise = ai.models.generateContent({
-                model: model,
-                contents: { parts: parts },
-                config: {
-                    systemInstruction: systemInstruction,
-                    // Removido temperatura fixa para permitir que o modelo Pro use seu raciocínio padrão
-                    candidateCount: 1,
-                    responseMimeType: "application/json"
-                }
-            });
-            
-            const abortPromise = new Promise<never>((_, reject) => {
-                if (signal) {
-                    signal.addEventListener('abort', () => reject(new Error("AbortError")));
-                }
-            });
+            if (onProgress) {
+                const streamPromise = async () => {
+                    const responseStream = await ai.models.generateContentStream({
+                        model: model,
+                        contents: { parts: parts },
+                        config: {
+                            systemInstruction: systemInstruction,
+                            candidateCount: 1,
+                            responseMimeType: "application/json"
+                        }
+                    });
+                    let fullText = "";
+                    for await (const chunk of responseStream) {
+                        if (signal?.aborted) throw new Error("AbortError");
+                        const chunkText = chunk.text;
+                        if (chunkText) {
+                            fullText += chunkText;
+                            onProgress(fullText);
+                        }
+                    }
+                    return fullText;
+                };
 
-            const response = await Promise.race([generatePromise, abortPromise]) as any;
-            return response.text || "";
+                const abortPromise = new Promise<never>((_, reject) => {
+                    if (signal) {
+                        signal.addEventListener('abort', () => reject(new Error("AbortError")));
+                    }
+                });
+
+                return await Promise.race([streamPromise(), abortPromise]);
+            } else {
+                const generatePromise = ai.models.generateContent({
+                    model: model,
+                    contents: { parts: parts },
+                    config: {
+                        systemInstruction: systemInstruction,
+                        candidateCount: 1,
+                        responseMimeType: "application/json"
+                    }
+                });
+                
+                const abortPromise = new Promise<never>((_, reject) => {
+                    if (signal) {
+                        signal.addEventListener('abort', () => reject(new Error("AbortError")));
+                    }
+                });
+
+                const response = await Promise.race([generatePromise, abortPromise]) as any;
+                return response.text || "";
+            }
         } catch (error: any) {
             if (error.message === "AbortError") throw error;
             

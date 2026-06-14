@@ -1,6 +1,6 @@
 import { SavedReport, AuditResult, Idea, IdeaComment, StoredPrompt, GlobalPrompt, UserProfile, RepositoryFile, RepositoryFolder } from '../types';
 import { db, auth, storage } from '../firebase';
-import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, onSnapshot, writeBatch, orderBy, where, updateDoc } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, onSnapshot, writeBatch, orderBy, where, updateDoc, limit } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
@@ -136,23 +136,33 @@ export const subscribeToUsers = (callback: (users: UserProfile[]) => void) => {
   const path = `users`;
   const q = query(collection(db, path));
   
+  const usersMap = new Map<string, UserProfile>();
+
   return onSnapshot(q, (snapshot) => {
-    const users: UserProfile[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      users.push({
-        uid: data.uid,
-        email: data.email,
-        name: data.displayName,
-        avatarUrl: data.avatarUrl || `https://ui-avatars.com/api/?name=${data.displayName}&background=C13B2E&color=fff&size=128`,
-        role: data.role,
-        state: data.state,
-        company: data.company,
-        jobFunction: data.jobFunction,
-        temporaryPassword: data.temporaryPassword
-      });
+    let hasChanges = false;
+    snapshot.docChanges().forEach((change) => {
+      hasChanges = true;
+      if (change.type === 'removed') {
+        usersMap.delete(change.doc.id);
+      } else {
+        const data = change.doc.data();
+        usersMap.set(data.uid, {
+          uid: data.uid,
+          email: data.email,
+          name: data.displayName,
+          avatarUrl: data.avatarUrl || `https://ui-avatars.com/api/?name=${data.displayName}&background=C13B2E&color=fff&size=128`,
+          role: data.role,
+          state: data.state,
+          company: data.company,
+          jobFunction: data.jobFunction,
+          temporaryPassword: data.temporaryPassword
+        });
+      }
     });
-    callback(users);
+
+    if (hasChanges || snapshot.empty) {
+      callback(Array.from(usersMap.values()));
+    }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
   });
@@ -170,25 +180,53 @@ export const updateUserProfile = async (uid: string, updates: Partial<UserProfil
 
 export const updateUserRole = async (uid: string, newRole: 'admin' | 'analyst' | 'viewer') => {
   await updateUserProfile(uid, { role: newRole });
+  await logAuditAction('ALTERAR_PERMISSAO', { targetUserId: uid, newRole });
+};
+
+export const logAuditAction = async (action: string, details: any = {}) => {
+  if (!auth.currentUser) return;
+  try {
+    const logId = `${Date.now()}_${auth.currentUser.uid}`;
+    const logEntry = {
+      action,
+      details,
+      timestamp: Date.now(),
+      userId: auth.currentUser.uid,
+      userEmail: auth.currentUser.email
+    };
+    await setDoc(doc(db, "audit_logs", logId), logEntry);
+  } catch (error) {
+    console.error("Failed to write audit log:", error);
+  }
 };
 
 export const subscribeToGlobalPrompts = (callback: (prompts: GlobalPrompt[]) => void) => {
   const path = `global_prompts`;
   const q = query(collection(db, path));
   
+  const promptsMap = new Map<string, GlobalPrompt>();
+
   return onSnapshot(q, (snapshot) => {
-    const prompts: GlobalPrompt[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      prompts.push({
-        id: data.id,
-        key: data.key,
-        text: data.text,
-        updatedBy: data.updatedBy,
-        timestamp: data.timestamp
-      });
+    let hasChanges = false;
+    snapshot.docChanges().forEach((change) => {
+      hasChanges = true;
+      if (change.type === 'removed') {
+        promptsMap.delete(change.doc.id);
+      } else {
+        const data = change.doc.data();
+        promptsMap.set(data.id, {
+          id: data.id,
+          key: data.key,
+          text: data.text,
+          updatedBy: data.updatedBy,
+          timestamp: data.timestamp
+        });
+      }
     });
-    callback(prompts);
+
+    if (hasChanges || snapshot.empty) {
+      callback(Array.from(promptsMap.values()));
+    }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
   });
@@ -265,19 +303,21 @@ export const getPrompt = async (promptId: string): Promise<StoredPrompt | null> 
   }
 };
 
-export const saveReport = async (editalName: string, result: AuditResult, promptId?: string): Promise<SavedReport | null> => {
+export const saveReport = async (editalName: string, result: AuditResult, promptId?: string, documentHash?: string): Promise<SavedReport | null> => {
   if (!auth.currentUser) return null;
   const userId = auth.currentUser.uid;
   
   const newReport: SavedReport = {
-    id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+    id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
     userId: userId,
     editalName: editalName || "Edital Geral",
     candidateName: result.candidateName || "Candidato Desconhecido",
     cnpj: result.organizationData?.cnpj || "N/A",
     timestamp: Date.now(),
-    result: result,
-    promptId: promptId
+    promptId: promptId,
+    overallStatus: result.overallStatus,
+    documentHash: documentHash,
+    result: result // kept in memory for immediate use
   };
 
   const path = `reports`;
@@ -285,17 +325,49 @@ export const saveReport = async (editalName: string, result: AuditResult, prompt
     const docRef = doc(db, path, newReport.id);
     const dataToSave: any = {
       ...newReport,
-      userId: userId,
-      result: JSON.stringify(newReport.result)
+      userId: userId
     };
+    
+    // Do not save the massive result object in the main document
+    delete dataToSave.result;
+    
     if (dataToSave.promptId === undefined) delete dataToSave.promptId;
     
+    // 1. Save metadata
     await setDoc(docRef, dataToSave);
+    
+    // 2. Save dense data in subcollection
+    const detailsRef = doc(db, `${path}/${newReport.id}/details`, 'content');
+    await setDoc(detailsRef, { result: JSON.stringify(result) });
+    
     return newReport;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
     return null;
   }
+};
+
+export const getReportResult = async (reportId: string): Promise<AuditResult | null> => {
+  if (!auth.currentUser) return null;
+  const path = `reports/${reportId}/details/content`;
+  try {
+    const docRef = doc(db, path);
+    const snapshot = await getDoc(docRef);
+    if (snapshot.exists() && snapshot.data().result) {
+      const data = snapshot.data();
+      return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+    }
+    
+    // Fallback for legacy items where result might still be directly inside the document.
+    const legacySnapshot = await getDoc(doc(db, 'reports', reportId));
+    if (legacySnapshot.exists() && legacySnapshot.data().result) {
+      const legacyData = legacySnapshot.data();
+      return typeof legacyData.result === 'string' ? JSON.parse(legacyData.result) : legacyData.result;
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+  return null;
 };
 
 export const migrateUserReports = async () => {
@@ -343,40 +415,76 @@ export const migrateUserReports = async () => {
   }
 };
 
-export const subscribeToReports = (callback: (groupedReports: Record<string, SavedReport[]>, allReports: SavedReport[]) => void) => {
+export const subscribeToReports = (callback: (groupedReports: Record<string, SavedReport[]>, allReports: SavedReport[]) => void, limitCount: number = 50) => {
   if (!auth.currentUser) return () => {};
   const path = `reports`;
   
-  const q = query(collection(db, path));
+  const q = query(
+    collection(db, path),
+    orderBy('timestamp', 'desc'),
+    limit(limitCount)
+  );
   
+  const reportsMap = new Map<string, SavedReport>();
+
   return onSnapshot(q, (snapshot) => {
-    const reports: SavedReport[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      reports.push({
-        id: data.id,
-        editalName: data.editalName,
-        candidateName: data.candidateName,
-        cnpj: data.cnpj,
-        timestamp: data.timestamp,
-        result: JSON.parse(data.result),
-        manualStatus: data.manualStatus,
-        userNotes: data.userNotes,
-        promptId: data.promptId
-      });
+    let hasChanges = false;
+
+    snapshot.docChanges().forEach((change) => {
+      hasChanges = true;
+      if (change.type === 'removed') {
+        reportsMap.delete(change.doc.id);
+      } else {
+        const data = change.doc.data();
+        let parsedResult;
+        
+        // For backwards compatibility with old records that have 'result' directly loaded
+        if (data.result) {
+            try {
+                parsedResult = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+            } catch (e) {
+                console.error("Failed to parse result for report", data.id, e);
+                parsedResult = {};
+            }
+        }
+
+        reportsMap.set(data.id, {
+          id: data.id,
+          editalName: data.editalName,
+          candidateName: data.candidateName,
+          cnpj: data.cnpj,
+          timestamp: data.timestamp,
+          overallStatus: data.overallStatus || parsedResult?.overallStatus,
+          result: undefined, // intentionally undefined to save memory - use getReportResult to fetch lazy data
+          manualStatus: data.manualStatus,
+          userNotes: data.userNotes,
+          promptId: data.promptId,
+          evaluatedBy: data.evaluatedBy,
+          evaluatedAt: data.evaluatedAt,
+          documentHash: data.documentHash
+        });
+      }
     });
     
-    // Group by Edital Name
-    const grouped = reports.reduce((acc, report) => {
-      if (!acc[report.editalName]) {
-        acc[report.editalName] = [];
-      }
-      acc[report.editalName].push(report);
-      acc[report.editalName].sort((a, b) => b.timestamp - a.timestamp);
-      return acc;
-    }, {} as Record<string, SavedReport[]>);
-    
-    callback(grouped, reports);
+    if (hasChanges || snapshot.empty) {
+        const reports = Array.from(reportsMap.values());
+        
+        // Group by Edital Name
+        const grouped = reports.reduce((acc, report) => {
+          if (!acc[report.editalName]) {
+            acc[report.editalName] = [];
+          }
+          acc[report.editalName].push(report);
+          return acc;
+        }, {} as Record<string, SavedReport[]>);
+
+        // Sort the arrays within grouped
+        Object.keys(grouped).forEach(key => {
+            grouped[key].sort((a, b) => b.timestamp - a.timestamp);
+        });
+        
+        callback(grouped, reports);
+    }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
   });
@@ -386,6 +494,7 @@ export const deleteReport = async (id: string) => {
   if (!auth.currentUser) return;
   const path = `reports/${id}`;
   try {
+    await logAuditAction('DELETAR_RELATORIO', { reportId: id });
     await deleteDoc(doc(db, path));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
@@ -444,21 +553,32 @@ export const subscribeToIdeas = (callback: (ideas: Idea[]) => void) => {
   const path = `ideas`;
   const q = query(collection(db, path), orderBy('timestamp', 'desc'));
   
+  const ideasMap = new Map<string, Idea>();
+
   return onSnapshot(q, (snapshot) => {
-    const ideas: Idea[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      ideas.push({
-        id: data.id,
-        userId: data.userId,
-        userName: data.userName,
-        title: data.title,
-        description: data.description,
-        timestamp: data.timestamp,
-        comments: [] // Comments will be fetched separately or via subcollection
-      });
+    let hasChanges = false;
+    snapshot.docChanges().forEach((change) => {
+      hasChanges = true;
+      if (change.type === 'removed') {
+        ideasMap.delete(change.doc.id);
+      } else {
+        const data = change.doc.data();
+        ideasMap.set(data.id, {
+          id: data.id,
+          userId: data.userId,
+          userName: data.userName,
+          title: data.title,
+          description: data.description,
+          timestamp: data.timestamp,
+          comments: [] // Comments will be fetched separately or via subcollection
+        });
+      }
     });
-    callback(ideas);
+
+    if (hasChanges || snapshot.empty) {
+      const sortedIdeas = Array.from(ideasMap.values()).sort((a, b) => b.timestamp - a.timestamp);
+      callback(sortedIdeas);
+    }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
   });
@@ -468,19 +588,30 @@ export const subscribeToComments = (ideaId: string, callback: (comments: IdeaCom
   const path = `ideas/${ideaId}/comments`;
   const q = query(collection(db, path), orderBy('timestamp', 'asc'));
   
+  const commentsMap = new Map<string, IdeaComment>();
+
   return onSnapshot(q, (snapshot) => {
-    const comments: IdeaComment[] = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      comments.push({
-        id: data.id,
-        userId: data.userId,
-        userName: data.userName,
-        text: data.text,
-        timestamp: data.timestamp
-      });
+    let hasChanges = false;
+    snapshot.docChanges().forEach((change) => {
+      hasChanges = true;
+      if (change.type === 'removed') {
+        commentsMap.delete(change.doc.id);
+      } else {
+        const data = change.doc.data();
+        commentsMap.set(data.id, {
+          id: data.id,
+          userId: data.userId,
+          userName: data.userName,
+          text: data.text,
+          timestamp: data.timestamp
+        });
+      }
     });
-    callback(comments);
+
+    if (hasChanges || snapshot.empty) {
+      const sortedComments = Array.from(commentsMap.values()).sort((a, b) => a.timestamp - b.timestamp);
+      callback(sortedComments);
+    }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
   });
@@ -596,12 +727,23 @@ export const subscribeToRepositoryFolders = (callback: (folders: RepositoryFolde
   const path = `repository_folders`;
   const q = query(collection(db, path), orderBy('createdAt', 'desc'));
   
+  const foldersMap = new Map<string, RepositoryFolder>();
+
   return onSnapshot(q, (snapshot) => {
-    const folders: RepositoryFolder[] = [];
-    snapshot.forEach((doc) => {
-      folders.push({ id: doc.id, ...doc.data() } as RepositoryFolder);
+    let hasChanges = false;
+    snapshot.docChanges().forEach((change) => {
+      hasChanges = true;
+      if (change.type === 'removed') {
+        foldersMap.delete(change.doc.id);
+      } else {
+        foldersMap.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as RepositoryFolder);
+      }
     });
-    callback(folders);
+
+    if (hasChanges || snapshot.empty) {
+      const sortedFolders = Array.from(foldersMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+      callback(sortedFolders);
+    }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
   });
@@ -685,73 +827,107 @@ export const deleteRepositoryFolder = async (folderId: string) => {
 // --- Repository Files ---
 export const subscribeToRepositoryFiles = (folderId: string | null, callback: (files: RepositoryFile[]) => void) => {
   const path = `repository_files`;
-  let q;
-  if (folderId) {
-    q = query(collection(db, path), where('folderId', '==', folderId));
-  } else {
-    q = query(collection(db, path));
-  }
+  // Querying for folderId (empty string if root)
+  const q = query(collection(db, path), where('folderId', '==', folderId || ''));
   
+  const filesMap = new Map<string, RepositoryFile>();
+
   return onSnapshot(q, (snapshot) => {
-    const files: RepositoryFile[] = [];
-    snapshot.forEach((doc) => {
-      files.push({ id: doc.id, ...doc.data() } as RepositoryFile);
+    let hasChanges = false;
+    snapshot.docChanges().forEach((change) => {
+      hasChanges = true;
+      if (change.type === 'removed') {
+        filesMap.delete(change.doc.id);
+      } else {
+        filesMap.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as RepositoryFile);
+      }
     });
-    // Sort locally by createdAt desc
-    files.sort((a, b) => b.createdAt - a.createdAt);
-    callback(files);
+
+    if (hasChanges || snapshot.empty) {
+      const sortedFiles = Array.from(filesMap.values()).sort((a, b) => b.createdAt - a.createdAt);
+      callback(sortedFiles);
+    }
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, path);
   });
 };
 
-export const uploadRepositoryFile = async (folderId: string, file: File, onProgress?: (progress: number) => void): Promise<string> => {
+export const uploadRepositoryFile = async (folderId: string | null, file: File, onProgress?: (progress: number) => void): Promise<string> => {
   if (!auth.currentUser) throw new Error("Requires authentication");
   const userId = auth.currentUser.uid;
   const fileId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
   
-  const storagePath = `repository/${userId}/${folderId}/${fileId}_${file.name}`;
-  const storageRef = ref(storage, storagePath);
-  
   return new Promise((resolve, reject) => {
-    const uploadTask = uploadBytesResumable(storageRef, file);
-    
-    uploadTask.on('state_changed', 
-      (snapshot) => {
-        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
-        if (onProgress) onProgress(progress);
-      }, 
-      (error) => {
-        console.error("Upload error:", error);
-        reject(error);
-      }, 
-      async () => {
-        try {
-          const path = `repository_files/${fileId}`;
-          const newFile: RepositoryFile = {
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64Data = (reader.result as string).split(',')[1];
+        const chunkSize = 500000;
+        const chunksCount = Math.ceil(base64Data.length / chunkSize);
+        
+        for (let i = 0; i < chunksCount; i++) {
+          const chunkData = base64Data.substring(i * chunkSize, (i + 1) * chunkSize);
+          const chunkPath = `repository_files/${fileId}/chunks/chunk_${i}`;
+          try {
+             await setDoc(doc(db, chunkPath), { data: chunkData });
+          } catch(err) {
+             console.error("Error setting chunk doc:", chunkPath, err);
+             throw err;
+          }
+          
+          if (onProgress) {
+             onProgress(Math.round(((i + 1) / chunksCount) * 100));
+          }
+        }
+        
+        const path = `repository_files/${fileId}`;
+        const newFile: RepositoryFile = {
             id: fileId,
-            folderId,
+            folderId: folderId || '',
             name: file.name,
             userId,
-            storagePath,
+            storagePath: '',
             size: file.size,
-            type: file.type,
-            createdAt: Date.now()
-          };
-          
-          await setDoc(doc(db, path), newFile);
-          resolve(fileId);
-        } catch (error) {
-          reject(error);
+            type: file.type || 'application/octet-stream',
+            createdAt: Date.now(),
+            chunkCount: chunksCount
+        };
+        
+        try {
+            await setDoc(doc(db, path), newFile);
+        } catch(err) {
+            console.error("Error setting main file doc:", path, err);
+            throw err;
         }
+        resolve(fileId);
+      } catch (e) {
+          reject(e);
       }
-    );
+    };
+    reader.onerror = (error) => {
+        console.error("File reading error:", error);
+        reject(error);
+    };
+    reader.readAsDataURL(file);
   });
 };
 
-export const getFileDownloadUrl = async (storagePath: string): Promise<string> => {
-  const fileRef = ref(storage, storagePath);
-  return await getDownloadURL(fileRef);
+export const getFileDownloadUrl = async (file: RepositoryFile): Promise<string> => {
+  if (file.chunkCount) {
+    let base64 = '';
+    for (let i = 0; i < file.chunkCount; i++) {
+       const chunkPath = `repository_files/${file.id}/chunks/chunk_${i}`;
+       const snap = await getDoc(doc(db, chunkPath));
+       if (snap.exists()) {
+          base64 += snap.data().data;
+       }
+    }
+    return `data:${file.type || 'application/octet-stream'};base64,${base64}`;
+  } else if (file.storagePath) {
+    const fileRef = ref(storage, file.storagePath);
+    return await getDownloadURL(fileRef);
+  }
+  throw new Error("File output missing");
 };
 
 export const updateRepositoryFile = async (fileId: string, updates: Partial<RepositoryFile>) => {
@@ -767,17 +943,24 @@ export const updateRepositoryFile = async (fileId: string, updates: Partial<Repo
 export const deleteRepositoryFile = async (file: RepositoryFile) => {
   if (!auth.currentUser) throw new Error("Requires authentication");
   
-  try {
-    // Delete from Storage
-    const storageRef = ref(storage, file.storagePath);
-    await deleteObject(storageRef);
-  } catch (e) {
-    console.warn("Storage object may already be deleted:", e);
+  if (file.chunkCount) {
+      for (let i = 0; i < file.chunkCount; i++) {
+          const chunkPath = `repository_files/${file.id}/chunks/chunk_${i}`;
+          try {
+             await deleteDoc(doc(db, chunkPath));
+          } catch(e) { console.warn("Failed to delete chunk", e); }
+      }
+  } else if (file.storagePath) {
+      try {
+        const storageRef = ref(storage, file.storagePath);
+        await deleteObject(storageRef);
+      } catch (e) {
+        console.warn("Storage object may already be deleted:", e);
+      }
   }
 
   const path = `repository_files/${file.id}`;
   try {
-    // Delete from Firestore
     await deleteDoc(doc(db, path));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);

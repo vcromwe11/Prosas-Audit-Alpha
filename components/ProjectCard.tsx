@@ -197,6 +197,7 @@ const ProjectCard: React.FC<Props> = ({
                     </div>
 
                     {/* Lista de verificação NEUTRA (sem check verde falso) */}
+                    {(!project.partialStream && project.analysisPhase !== 'AI_PROMPT') && (
                     <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-1">
                         {criteriaList.map((criterion, idx) => (
                             <div key={idx} className={`flex items-center gap-2 text-xs transition-colors duration-300 ${
@@ -210,6 +211,15 @@ const ProjectCard: React.FC<Props> = ({
                             </div>
                         ))}
                     </div>
+                    )}
+                    
+                    {project.partialStream && (
+                        <div className="mt-2 h-32 overflow-y-auto custom-scrollbar bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2 font-mono text-[10px] text-gray-600 dark:text-gray-400 opacity-80 flex flex-col justify-end">
+                            <span className="whitespace-pre-wrap">{project.partialStream.slice(-500)}</span>
+                            <span className="animate-pulse font-bold">_</span>
+                        </div>
+                    )}
+
                     <div className="mt-4 text-[10px] text-gray-400 dark:text-gray-500 text-center italic border-t border-gray-100 dark:border-gray-700 pt-2">
                         Aguarde, a IA está analisando o conteúdo real...
                     </div>

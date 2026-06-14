@@ -32,6 +32,7 @@ export interface CandidateAnalysis {
   analysisPhase?: 'WAITING' | 'AUTH' | 'AI_PROMPT' | 'DONE';
   currentAuthTask?: string;
   result?: AuditResult;
+  partialStream?: string;
   error?: string;
 }
 
@@ -83,10 +84,11 @@ export interface RepositoryFile {
   folderId: string;
   name: string;
   userId: string;
-  storagePath: string;
+  storagePath: string; // Left here for backwards compatibility
   size: number;
   type: string;
   createdAt: number;
+  chunkCount?: number;
 }
 
 export interface PdfPage {
@@ -110,12 +112,14 @@ export interface SavedReport {
   candidateName: string;
   cnpj: string;
   timestamp: number;
-  result: AuditResult;
+  result?: AuditResult; // now optional because of lazy loading
+  overallStatus?: string; // added to store status natively
   manualStatus?: 'EM ANÁLISE' | 'APROVADO COM RESSALVAS' | 'REPROVADO' | 'APROVADO';
   userNotes?: string;
   promptId?: string;
   evaluatedBy?: string;
   evaluatedAt?: number;
+  documentHash?: string;
 }
 
 export interface UserProfile {

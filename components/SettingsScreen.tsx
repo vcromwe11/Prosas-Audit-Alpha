@@ -45,7 +45,57 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMsg, setProfileMsg] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'general' | 'users' | 'advanced' | 'about'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'users' | 'advanced' | 'about' | 'honeypot'>('general');
+  const [honeypotStage, setHoneypotStage] = useState(0);
+  const [honeypotLoadingCompleted, setHoneypotLoadingCompleted] = useState(false);
+  const [honeypotLoadingDuration, setHoneypotLoadingDuration] = useState(2.5);
+  const [honeypotGif, setHoneypotGif] = useState("https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif");
+  const [honeypotAddress, setHoneypotAddress] = useState("");
+  
+  const honeypotGifs = [
+      "https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif",
+      "https://media.giphy.com/media/V4NSR1NG2p0Ke/giphy.gif",
+      "https://media.giphy.com/media/10X22vmagVvhOo/giphy.gif",
+      "https://media.giphy.com/media/xT0xeJpnrWC4XWblWQ/giphy.gif",
+      "https://media.giphy.com/media/13HgwGsXF0aiGY/giphy.gif",
+      "https://media.giphy.com/media/YQitE4YNQx8INZNNJM/giphy.gif",
+      "https://media.giphy.com/media/M7E5GIMTkHLzO/giphy.gif",
+      "https://media.giphy.com/media/Ch31IjylFca8o/giphy.gif",
+      "https://media.giphy.com/media/A06UF3macafXW/giphy.gif",
+      "https://media.giphy.com/media/o0vwzuFwCGAFO/giphy.gif"
+  ];
+
+  const generateFakeAddress = (state: string) => {
+      const defaultState = state || "RJ";
+      const cities: Record<string, string[]> = {
+          "SP": ["São Paulo", "Campinas", "Guarulhos"],
+          "RJ": ["Rio de Janeiro", "Niterói", "Duque de Caxias"],
+          "MG": ["Belo Horizonte", "Uberlândia", "Contagem"]
+      };
+      const cityList = cities[defaultState] || ["Brasília", "Curitiba", "Fortaleza"];
+      const city = cityList[Math.floor(Math.random() * cityList.length)];
+      const streets = ["Rua das Acácias", "Av. dos Piratas", "Travessa do Hack", "Rodovia do Sucesso", "Beco do Código", "Alameda dos Anjos"];
+      const street = streets[Math.floor(Math.random() * streets.length)];
+      return `${street}, ${Math.floor(Math.random() * 1000) + 1} - ${city}/${defaultState}`;
+  };
+
+  const triggerHoneypotLoad = (duration: number) => {
+      setHoneypotLoadingDuration(duration);
+      setHoneypotStage(1);
+      setHoneypotLoadingCompleted(false);
+      
+      let newGif;
+      do {
+          newGif = honeypotGifs[Math.floor(Math.random() * honeypotGifs.length)];
+      } while (newGif === honeypotGif && honeypotGifs.length > 1);
+      
+      setHoneypotGif(newGif);
+      
+      if (!honeypotAddress) {
+          setHoneypotAddress(generateFakeAddress(profileForm.state));
+      }
+  };
+
   const [expandedFeature, setExpandedFeature] = useState<string | null>(null);
   const { checkPermission } = useAuthGuard();
 
@@ -176,6 +226,17 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 }`}
             >
                 <i className="fas fa-info-circle mr-2"></i>Sobre
+            </button>
+            <button
+                onClick={() => { setActiveTab('honeypot'); setHoneypotStage(0); }}
+                className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${
+                    activeTab === 'honeypot'
+                        ? 'border-gray-500 text-gray-700 dark:border-gray-400 dark:text-gray-300'
+                        : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                }`}
+                title="Diagnóstico do sistema e volumes locais"
+            >
+                <i className="fas fa-server mr-2 opacity-70"></i><span className="opacity-70">System Diagnostics</span>
             </button>
         </div>
         
@@ -626,6 +687,168 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     </div>
                 </div>
             </div>
+        )}
+        {activeTab === 'honeypot' && (
+            <motion.div 
+                initial={{ opacity: 0, scale: 0.95 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden font-mono p-6 min-h-[400px]"
+            >
+                <div className="mb-4 text-gray-700 dark:text-gray-300 text-lg border-b border-gray-200 dark:border-gray-700 pb-2 flex items-center">
+                    <i className="fas fa-network-wired mr-3 text-xl"></i> 
+                    <span className="font-bold tracking-widest uppercase text-sm">Diagnóstico do Sistema & Logs</span>
+                </div>
+                
+                {honeypotStage === 0 && (
+                    <div className="space-y-6 mt-6">
+                        <p className="text-gray-500 dark:text-gray-400 text-sm bg-gray-50 dark:bg-gray-900/50 p-3 rounded border border-gray-200 dark:border-gray-800">
+                            Aviso: Acesso a volumes persistentes e configurações de ambiente em formato bruto. Não modifique essas variáveis a menos que instruído pelos administradores do sistema.
+                        </p>
+                        <div className="border border-gray-200 dark:border-gray-700 p-0 bg-gray-50 dark:bg-gray-900 rounded shadow-inner text-sm">
+                            <div className="flex justify-between items-center hover:bg-gray-100 dark:hover:bg-gray-800 p-4 cursor-pointer transition-colors border-b border-gray-200 dark:border-gray-700" onClick={() => triggerHoneypotLoad(1.5)}>
+                                <span className="font-bold text-gray-700 dark:text-gray-300"><i className="fas fa-folder text-blue-500 mr-3"></i> /var/log/mongodb</span>
+                                <span className="text-gray-400 dark:text-gray-500">14 Itens</span>
+                            </div>
+                            <div className="flex justify-between items-center hover:bg-gray-100 dark:hover:bg-gray-800 p-4 cursor-pointer transition-colors border-b border-gray-200 dark:border-gray-700" onClick={() => triggerHoneypotLoad(3.0)}>
+                                <span className="font-bold text-gray-700 dark:text-gray-300"><i className="fas fa-file-code text-yellow-500 mr-3"></i> env_config.json</span>
+                                <span className="text-gray-400 dark:text-gray-500">2.1 KB</span>
+                            </div>
+                            <div className="flex justify-between items-center hover:bg-gray-100 dark:hover:bg-gray-800 p-4 cursor-pointer transition-colors border-b border-gray-200 dark:border-gray-700" onClick={() => triggerHoneypotLoad(4.5)}>
+                                <span className="font-bold text-gray-700 dark:text-gray-300"><i className="fas fa-database text-purple-500 mr-3"></i> session_cache.db</span>
+                                <span className="text-gray-400 dark:text-gray-500">4.2 MB</span>
+                            </div>
+                            <div className="flex justify-between items-center hover:bg-gray-100 dark:hover:bg-gray-800 p-4 cursor-pointer transition-colors" onClick={() => triggerHoneypotLoad(6.0)}>
+                                <span className="font-bold text-gray-700 dark:text-gray-300"><i className="fas fa-key text-red-400 mr-3"></i> auth_tokens_v2.pem</span>
+                                <span className="text-gray-400 dark:text-gray-500">Leitura Apenas</span>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {honeypotStage === 1 && (
+                    <div className="space-y-6 mt-12 px-8">
+                        <p className={`text-sm text-center font-bold text-gray-600 dark:text-gray-400 ${honeypotLoadingCompleted ? '' : 'animate-pulse'}`}>
+                            {honeypotLoadingCompleted ? 'Descriptografia da camada inicial concluída.' : 'Montando volumes seguros e decodificando nós...'}
+                        </p>
+                        <div className="h-4 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                            <motion.div 
+                                initial={{ width: "0%" }} 
+                                animate={{ width: honeypotLoadingCompleted ? "100%" : "100%" }} 
+                                transition={{ duration: honeypotLoadingDuration, ease: "easeInOut" }} 
+                                className={`h-full ${honeypotLoadingCompleted ? 'bg-green-500' : 'bg-blue-500'} rounded-full`} 
+                                onAnimationComplete={() => setHoneypotLoadingCompleted(true)}
+                            />
+                        </div>
+                        <div className="text-xs text-gray-400 dark:text-gray-500 flex flex-col gap-1 mt-4">
+                            <p>Lendo blocos de armazenamento local...</p>
+                            {honeypotLoadingCompleted && <p>Estabelecendo conexão socket crua...</p>}
+                        </div>
+                        
+                        {honeypotLoadingCompleted && (
+                            <div className="flex justify-center mt-6">
+                                <button 
+                                    onClick={() => {
+                                        setHoneypotStage(2);
+                                        setHoneypotLoadingCompleted(false);
+                                    }}
+                                    className="bg-prosas-blue hover:bg-blue-600 text-white px-6 py-2 rounded shadow font-bold font-sans transition-colors"
+                                >
+                                    Confirmar visualização
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {honeypotStage === 2 && (
+                    <div className="space-y-6 mt-12 px-8">
+                        <p className={`text-sm text-center font-bold text-red-500 ${honeypotLoadingCompleted ? '' : 'animate-pulse'}`}>
+                            {honeypotLoadingCompleted ? 'ALERTA DE SEGURANÇA MÁXIMA DESABILITADO.' : 'Carregando arquivos restritos do sistema core...'}
+                        </p>
+                        <div className="h-4 w-full bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+                            <motion.div 
+                                initial={{ width: "0%" }} 
+                                animate={{ width: "100%" }} 
+                                transition={{ duration: honeypotLoadingDuration * 0.4, ease: "easeInOut" }} 
+                                className={`h-full ${honeypotLoadingCompleted ? 'bg-red-600' : 'bg-red-400'} rounded-full`} 
+                                onAnimationComplete={() => setHoneypotLoadingCompleted(true)}
+                            />
+                        </div>
+                        
+                        <div className="bg-red-50 dark:bg-red-900/10 border-l-4 border-red-500 p-4 mt-6">
+                            <p className="text-red-700 dark:text-red-400 text-sm font-bold">⚠️ ATENÇÃO: Nível de Acesso ROOT atingido.</p>
+                            <p className="text-red-600 dark:text-red-300 text-xs mt-1">Os dados que serão exibidos a seguir contêm segredos corporativos, senhas de acesso a banco de dados e APIs confidenciais. Qualquer vazamento causará danos irreparáveis aos sistemas, resultando na perda do seu emprego e da nossa dignidade computacional.</p>
+                        </div>
+                        
+                        {honeypotLoadingCompleted && (
+                            <div className="flex justify-center mt-6">
+                                <button 
+                                    onClick={() => {
+                                        setHoneypotStage(3);
+                                    }}
+                                    className="bg-red-600 hover:bg-red-700 text-white px-8 py-3 rounded shadow-lg font-bold font-sans transition-colors ring-4 ring-red-500/30 uppercase tracking-widest text-sm"
+                                >
+                                    Tem certeza absoluta?
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {honeypotStage === 3 && (
+                    <motion.div 
+                        initial={{ opacity: 0, scale: 0.8 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="flex flex-col items-center justify-center p-4 space-y-6 mt-8"
+                    >
+                        <h2 className="text-2xl font-bold text-gray-800 dark:text-gray-100 text-center tracking-tight uppercase">Terminal Invadido!</h2>
+                        
+                        <div className="flex flex-col sm:flex-row items-center justify-center gap-8 mt-4">
+                            <div className="relative">
+                                <img 
+                                    src={honeypotGif} 
+                                    alt="Hacker" 
+                                    className="rounded-xl shadow-2xl border-4 border-green-500 max-w-[250px] sm:max-w-[300px]" 
+                                />
+                                <div className="absolute -bottom-4 -right-4 text-5xl">🏴‍☠️</div>
+                            </div>
+                            
+                            <div className="flex flex-col items-center bg-[#F4EBD0] border-4 border-[#8B5A2B] p-6 rounded-sm shadow-xl max-w-[250px] transform rotate-2">
+                                <div className="text-[#8B5A2B] font-black text-4xl mb-4 uppercase tracking-widest" style={{ fontFamily: 'Georgia, serif' }}>
+                                    WANTED
+                                </div>
+                                <div className="border-[3px] border-[#8B5A2B] p-1 bg-[#E8DCC0] mb-4 shadow-sm w-36 h-36">
+                                    <img 
+                                        src={user?.photoURL || 'https://api.dicebear.com/7.x/identicon/svg?seed=question'}
+                                        alt="User Silhouette"
+                                        className="w-full h-full object-cover grayscale mix-blend-multiply opacity-80"
+                                    />
+                                </div>
+                                <div className="text-center space-y-2 text-[#5C3A21]" style={{ fontFamily: 'Georgia, serif' }}>
+                                    <p className="font-bold text-xl uppercase tracking-wider">{profileForm.name || 'Usuário Anônimo'}</p>
+                                    <p className="text-sm font-medium border-t-2 border-b-2 border-[#8B5A2B] py-1 inline-block">Visto Por Último Em:</p>
+                                    <p className="text-xs font-bold font-mono tracking-tight bg-white/50 px-2 py-1 rounded">{honeypotAddress}</p>
+                                    <p className="text-xl font-black mt-3">REWARD: $50,000</p>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div className="text-center space-y-3 mt-6">
+                            <p className="text-xl text-green-500 dark:text-green-400 font-bold tracking-tight font-mono">Arghh! Você descobriu o nosso tesouro!</p>
+                            <p className="text-sm text-gray-500 dark:text-gray-400 max-w-lg mx-auto leading-relaxed font-sans">
+                                Não há senhas vazadas da AWS, Google Cloud ou cartões de crédito aqui. Sorria, você está sendo monitorado. Hack the planet! 💻✨
+                            </p>
+                        </div>
+                        
+                        <button 
+                            onClick={() => { setActiveTab('general'); }} 
+                            className="mt-8 bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 px-6 py-2.5 rounded shadow-sm font-bold text-sm hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors font-sans"
+                        >
+                            Esconder as Provas & Voltar
+                        </button>
+                    </motion.div>
+                )}
+            </motion.div>
         )}
     </motion.div>
   );

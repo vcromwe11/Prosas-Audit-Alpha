@@ -5,7 +5,7 @@ import { CandidateAnalysis, AppStage, AuditContext, UserProfile, SavedReport, Id
 import { extractTextFromPdf } from './services/pdfService';
 import { extractPdfsFromZip } from './services/zipService';
 import { runDocumentAudit, generateCriteriaFromRegulation, generateAuthRulesFromRegulation, PromptGenerationMode } from './services/geminiService';
-import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribeToIdeas, saveIdea, saveComment, subscribeToComments, deleteIdea, deleteReport, savePrompt, getPrompt, migrateUserReports } from './services/storageService';
+import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribeToIdeas, saveIdea, saveComment, subscribeToComments, deleteIdea, deleteReport, savePrompt, getPrompt, migrateUserReports, logAuditAction } from './services/storageService';
 import { PROMPTS } from './prompts';
 import { findBackupFile, uploadToDrive, downloadFromDrive } from './services/driveService';
 import { DEFAULT_DOCUMENT_CRITERIA } from './constants';
@@ -98,19 +98,34 @@ const App: React.FC = () => {
       }
   };
 
-  const handleDeleteIdea = async (ideaId: string) => {
-      if (!checkPermission('mutate_data')) {
-          alert('Você não tem permissão para realizar esta ação.');
+  const [ideaToDelete, setIdeaToDelete] = useState<string | null>(null);
+
+  const confirmDeleteIdea = async () => {
+      if (!ideaToDelete) return;
+      const idea = ideas.find(i => i.id === ideaToDelete);
+      if (!idea || idea.userId !== user?.uid) {
+          setIdeaToDelete(null);
           return;
       }
-      if (window.confirm("Tem certeza que deseja excluir esta ideia?")) {
+
+      const id = ideaToDelete;
+      setIdeaToDelete(null);
+      if (selectedIdea?.id === id) {
           setSelectedIdea(null);
-          try {
-              await deleteIdea(ideaId);
-          } catch (error) {
-              console.error("Erro ao excluir ideia:", error);
-          }
       }
+      
+      try {
+          await deleteIdea(id);
+      } catch (error) {
+          console.error("Erro ao excluir ideia:", error);
+      }
+  };
+
+  const handleDeleteIdeaClick = (ideaId: string) => {
+      if (!checkPermission('mutate_data') && user?.uid !== ideas.find(i => i.id === ideaId)?.userId) {
+          return; // Ignore if they don't have permission and it's not theirs
+      }
+      setIdeaToDelete(ideaId);
   };
   const [user, setUser] = useState<UserProfile | null>(null);
   
@@ -235,6 +250,7 @@ const App: React.FC = () => {
   // Storage & Reports
   const [groupedReports, setGroupedReports] = useState<Record<string, SavedReport[]>>({});
   const [allReports, setAllReports] = useState<SavedReport[]>([]);
+  const [reportLimit, setReportLimit] = useState(50);
   const [selectedReport, setSelectedReport] = useState<SavedReport | null>(null);
   const isInitialReportsLoad = useRef(true);
 
@@ -391,14 +407,14 @@ const App: React.FC = () => {
   }, [candidates]);
 
 
-  // Load reports and ideas when user logs in
+  // Load reports and ideas when user logs in or reportLimit changes
   useEffect(() => {
     if (user) {
       migrateUserReports();
       const unsubscribeReports = subscribeToReports((grouped, all) => {
         setGroupedReports(grouped);
         setAllReports(all);
-      });
+      }, reportLimit);
       
       const unsubscribeIdeas = subscribeToIdeas((newIdeas) => {
         setIdeas(newIdeas);
@@ -413,7 +429,7 @@ const App: React.FC = () => {
       setAllReports([]);
       setIdeas([]);
     }
-  }, [user]);
+  }, [user, reportLimit]);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
       e.preventDefault();
@@ -581,6 +597,9 @@ const App: React.FC = () => {
     setLoadingContext(true);
     try {
         const text = await extractTextFromPdf(file);
+        if (!text || text.trim().length === 0) {
+            alert("Atenção: O arquivo parece estar vazio ou a IA não conseguiu extrair texto dele. Se for uma imagem digitalizada, tente usar um PDF com texto.");
+        }
         setContext(prev => {
             const newContext = { ...prev };
             if (type === 'regulation') {
@@ -604,6 +623,7 @@ const App: React.FC = () => {
   const handleGenerateAuthRules = async () => {
       if (!context.regulationText) return;
       setIsGeneratingAuthRules(true);
+      await logAuditAction('GERAR_REGRAS_AUTENTICACAO_EDITAL', { referenceDate: context.referenceDate });
       try {
           const result = await generateAuthRulesFromRegulation(context.regulationText, context.formTemplateText, context.referenceDate);
           setContext(prev => ({ 
@@ -623,6 +643,7 @@ const App: React.FC = () => {
       if (!context.regulationText) return;
       setIsGeneratingCriteria(true);
       setIsPromptMenuOpen(false);
+      await logAuditAction('GERAR_CRITERIOS_EDITAL', { mode });
       try {
           const newCriteria = await generateCriteriaFromRegulation(context.regulationText, mode);
           if (newCriteria) {
@@ -729,6 +750,8 @@ const App: React.FC = () => {
           return;
       }
 
+      await logAuditAction('INICIAR_ANALISE_PROJETO', { candidateName: candidate.candidateName, slotId });
+
       const abortController = new AbortController();
       abortControllersRef.current[slotId] = abortController;
 
@@ -754,10 +777,34 @@ const App: React.FC = () => {
             }
         }
 
+        // Generate a fast hash based on file metadata + analysis context
+        const hashPayload = filesForAi.map(f => `${f.name}-${f.size}-${f.lastModified}`).join('|') 
+            + "|" + context.regulationText 
+            + "|" + context.criteriaText 
+            + "|" + (withAuth ? "auth" : "no-auth")
+            + "|" + context.referenceDate;
+        
+        const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(hashPayload));
+        const documentHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        const cachedReport = allReports.find(r => r.documentHash === documentHash && r.documentHash !== undefined);
         let result: any;
         let promptText = "";
 
-        if (analysisMode === 'IA_OTIMIZADA' && !deterministicAuthPassed) {
+        if (cachedReport && cachedReport.result) {
+            console.log("CACHE HIT: Reusing existing analysis for documentHash", documentHash);
+            result = cachedReport.result;
+            promptText = "Cached Request - Retirado do histórico para economizar tempo e cota.";
+            
+            // Simula um loading rápido para UX
+            for (let i = 0; i <= 10; i++) {
+                if (abortController.signal.aborted) throw new Error("AbortError");
+                setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, partialStream: "Recuperando dados em cache..." + ".".repeat(i) } : c));
+                await new Promise(r => setTimeout(r, 100));
+            }
+            
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
+        } else if (analysisMode === 'IA_OTIMIZADA' && !deterministicAuthPassed) {
             // Short-circuit: Reprovado (Inabilitação Documental) without calling AI
             result = {
                 summary: authReport + "\n\n--- ANÁLISE INTERROMPIDA ---\n\nO candidato falhou nas triagens obrigatórias, sendo reprovado por Inabilitação Documental sem a necessidade de prosseguir com a fase de IA Completa.",
@@ -782,7 +829,12 @@ const App: React.FC = () => {
                 context.criteriaText,
                 filesForAi,
                 [], // Do not send auth rules to AI anymore
-                abortController.signal
+                abortController.signal,
+                (streamedText) => {
+                    setCandidates(prev => prev.map(c => 
+                        c.slotId === slotId ? { ...c, partialStream: streamedText } : c
+                    ));
+                }
             );
             
             result = aiData.result;
@@ -799,7 +851,7 @@ const App: React.FC = () => {
         const promptId = await savePrompt(promptText);
 
         // Save immediately to DB
-        const savedReport = await saveReport(context.editalTitle, result, promptId || undefined);
+        const savedReport = await saveReport(context.editalTitle, result, promptId || undefined, documentHash);
 
         // Update Slot
         setCandidates(prev => prev.map(c => {
@@ -1046,9 +1098,9 @@ const App: React.FC = () => {
                                               >
                                                   <span className="truncate">{report.candidateName}</span>
                                                   <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                                      (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-400' : 
-                                                      (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-400' : 
-                                                      (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-400' : 'bg-blue-400'
+                                                      (report.manualStatus || report.overallStatus) === 'APROVADO' ? 'bg-green-400' : 
+                                                      (report.manualStatus || report.overallStatus) === 'REPROVADO' ? 'bg-red-400' : 
+                                                      (report.manualStatus || report.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-400' : 'bg-blue-400'
                                                   }`}></span>
                                               </button>
                                           ))}
@@ -1165,6 +1217,7 @@ const App: React.FC = () => {
                 handleSetStage={handleSetStage}
                 setReportToDelete={setReportToDelete}
                 setIsDeleteModalOpen={setIsDeleteModalOpen}
+                onLoadMore={() => setReportLimit(prev => prev + 50)}
               />
           )}
 
@@ -2188,13 +2241,25 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                               </div>
                               <div className="flex items-center gap-2">
                                   {user?.uid === selectedIdea.userId && (
-                                      <button 
-                                          onClick={() => handleDeleteIdea(selectedIdea.id)}
-                                          className="text-red-400 hover:text-red-600 p-2 transition-colors"
-                                          title="Excluir Ideia"
-                                      >
-                                          <i className="fas fa-trash-alt"></i>
-                                      </button>
+                                      ideaToDelete === selectedIdea.id ? (
+                                          <div className="flex items-center gap-2 bg-red-50 dark:bg-red-900/20 px-3 py-1.5 rounded-lg border border-red-100 dark:border-red-900/50">
+                                              <span className="text-xs font-bold text-red-600 dark:text-red-400">Excluir?</span>
+                                              <button onClick={confirmDeleteIdea} className="text-xs bg-red-500 hover:bg-red-600 text-white px-2 py-1 rounded font-bold transition-colors">
+                                                  Sim
+                                              </button>
+                                              <button onClick={() => setIdeaToDelete(null)} className="text-xs bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 px-2 py-1 rounded font-bold transition-colors">
+                                                  Não
+                                              </button>
+                                          </div>
+                                      ) : (
+                                          <button 
+                                              onClick={() => handleDeleteIdeaClick(selectedIdea.id)}
+                                              className="text-red-400 hover:text-red-600 p-2 transition-colors"
+                                              title="Excluir Ideia"
+                                          >
+                                              <i className="fas fa-trash-alt"></i>
+                                          </button>
+                                      )
                                   )}
                                   <button onClick={() => setSelectedIdea(null)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 p-2">
                                       <i className="fas fa-times"></i>

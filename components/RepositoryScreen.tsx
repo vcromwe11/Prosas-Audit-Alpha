@@ -46,12 +46,9 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
   }, []);
 
   useEffect(() => {
-    if (selectedFolder) {
-      const unsubFiles = subscribeToRepositoryFiles(selectedFolder.id, setFiles);
-      return () => unsubFiles();
-    } else {
-      setFiles([]);
-    }
+    // Fetch files for the selected folder, or root if selectedFolder is null
+    const unsubFiles = subscribeToRepositoryFiles(selectedFolder ? selectedFolder.id : null, setFiles);
+    return () => unsubFiles();
   }, [selectedFolder]);
 
   const handleCreateFolder = async () => {
@@ -139,14 +136,15 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
               }
           }
 
-          if (targetFolderId) {
-              try {
-                  await uploadRepositoryFile(targetFolderId, file);
-              } catch (e) {
-                  console.error(e);
-              }
-          } else {
-              console.warn("Nenhuma pasta selecionada ou raiz encontrada para:", file.name);
+          try {
+              await uploadRepositoryFile(targetFolderId, file, (progress) => {
+                  // Calculate overall progress
+                  const overallProgress = Math.round(((completed + (progress / 100)) / totalFiles) * 100);
+                  setUploadProgress(overallProgress);
+              });
+          } catch (e) {
+              console.error("Erro no upload do arquivo:", file.name, e);
+              alert(`Erro ao fazer upload do arquivo ${file.name}. Verifique as permissões do Firebase Storage.`);
           }
 
           completed++;
@@ -176,12 +174,8 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
     };
 
     const handleDownloadFile = async (file: RepositoryFile) => {
-        if (!file.storagePath) {
-            alert('Arquivo não encontrado no storage.');
-            return;
-        }
         try {
-            const url = await getFileDownloadUrl(file.storagePath);
+            const url = await getFileDownloadUrl(file);
             window.open(url, '_blank');
         } catch (e: any) {
             console.error("Download fail:", e);
@@ -351,64 +345,48 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                     onChange={handleFileUpload}
                 />
                 
-                {!selectedFolder ? (
-                    <div className="flex-1 flex items-center justify-center text-gray-400 dark:text-gray-500 flex-col gap-3">
-                        <i className="fas fa-folder-open text-4xl mb-2 opacity-50"></i>
-                        <p>Selecione uma pasta para visualizar seus arquivos ou inicie o envio agora.</p>
-                        <div className="flex gap-2 mt-4">
+                <>
+                    <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900 sticky top-0 z-10">
+                        <div>
+                            <h3 className="font-semibold text-gray-800 dark:text-gray-200">{selectedFolder ? selectedFolder.name : 'Arquivos na Raiz'}</h3>
+                            <p className="text-xs text-gray-500">{files.length} arquivo(s)</p>
+                        </div>
+                        
+                        <div className="flex gap-2">
                             <button 
                                 onClick={() => folderInputRef.current?.click()}
                                 disabled={isUploading}
                                 className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
                             >
-                                <i className="fas fa-folder-plus"></i> Fazer Upload de Pasta
+                                <i className="fas fa-folder-plus"></i> Upload de Pasta
+                            </button>
+                            <button 
+                                onClick={() => fileInputRef.current?.click()}
+                                disabled={isUploading}
+                                className="bg-prosas-blue hover:bg-prosas-blue-dark text-white px-4 py-2 text-sm rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+                            >
+                                {isUploading ? (
+                                    <><i className="fas fa-spinner fa-spin"></i> Enviando... {uploadProgress}%</>
+                                ) : (
+                                    <><i className="fas fa-upload"></i> Upload de Arquivos</>
+                                )}
                             </button>
                         </div>
-                        {isUploading && <p className="text-sm mt-2 text-prosas-blue"><i className="fas fa-spinner fa-spin"></i> Enviando... {uploadProgress}%</p>}
                     </div>
-                ) : (
-                    <>
-                        <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900 sticky top-0 z-10">
-                            <div>
-                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">{selectedFolder.name}</h3>
-                                <p className="text-xs text-gray-500">{files.length} arquivo(s)</p>
-                            </div>
-                            
-                            <div className="flex gap-2">
-                                <button 
-                                    onClick={() => folderInputRef.current?.click()}
-                                    disabled={isUploading}
-                                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
-                                >
-                                    <i className="fas fa-folder-plus"></i> Upload de Pasta
-                                </button>
-                                <button 
-                                    onClick={() => fileInputRef.current?.click()}
-                                    disabled={isUploading}
-                                    className="bg-prosas-blue hover:bg-prosas-blue-dark text-white px-4 py-2 text-sm rounded shadow-sm disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
-                                >
-                                    {isUploading ? (
-                                        <><i className="fas fa-spinner fa-spin"></i> Enviando... {uploadProgress}%</>
-                                    ) : (
-                                        <><i className="fas fa-upload"></i> Upload de Arquivos</>
-                                    )}
-                                </button>
-                            </div>
-                        </div>
 
-                        <div 
-                            className="flex-1 overflow-y-auto p-4 relative"
-                            onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                            onDrop={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                if(e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-                                    handleFileUpload({ target: { files: e.dataTransfer.files } } as any);
-                                }
-                            }}
-                        >
-                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                {files.map(file => (
+                    <div 
+                        className="flex-1 overflow-y-auto p-4 relative"
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                        onDrop={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            if(e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                handleFileUpload({ target: { files: e.dataTransfer.files } } as any);
+                            }
+                        }}
+                    >
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {files.map(file => (
                                     <div 
                                         key={file.id} 
                                         className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 bg-gray-50 dark:bg-gray-800 hover:shadow-md transition-shadow group flex flex-col cursor-grab active:cursor-grabbing"
@@ -436,7 +414,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                                                         defaultValue=""
                                                     >
                                                         <option value="" disabled>Mover para...</option>
-                                                        {folders.filter(f => f.id !== selectedFolder.id).map(f => (
+                                                        {folders.filter(f => f.id !== selectedFolder?.id).map(f => (
                                                             <option key={f.id} value={f.id}>{f.name}</option>
                                                         ))}
                                                     </select>
@@ -478,7 +456,6 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                             )}
                         </div>
                     </>
-                )}
             </div>
         </div>
     </motion.div>

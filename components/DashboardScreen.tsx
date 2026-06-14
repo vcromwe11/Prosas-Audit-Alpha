@@ -11,6 +11,7 @@ interface DashboardScreenProps {
   setReportToDelete: (report: SavedReport) => void;
   setIsDeleteModalOpen: (isOpen: boolean) => void;
   userRole?: 'admin' | 'analyst' | 'viewer';
+  onLoadMore?: () => void;
 }
 
 export const DashboardScreen: React.FC<DashboardScreenProps> = ({
@@ -21,7 +22,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
   handleSetStage,
   setReportToDelete,
   setIsDeleteModalOpen,
-  userRole
+  userRole,
+  onLoadMore
 }) => {
   const allReports = selectedDashboardEdital ? (groupedReports[selectedDashboardEdital] || []) : Object.values(groupedReports).flat();
 
@@ -75,8 +77,8 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       }
       
       if (sortKey === 'status') {
-        const statusA = a.manualStatus || a.result.overallStatus || '';
-        const statusB = b.manualStatus || b.result.overallStatus || '';
+        const statusA = a.manualStatus || a.overallStatus || '';
+        const statusB = b.manualStatus || b.overallStatus || '';
         return sortOrder === 'asc'
           ? statusA.localeCompare(statusB, 'pt', { sensitivity: 'base' })
           : statusB.localeCompare(statusA, 'pt', { sensitivity: 'base' });
@@ -128,7 +130,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                 <div className="text-3xl font-bold text-green-600 mt-2">
                     {(() => {
                         if (!allReports.length) return '0%';
-                        const approved = allReports.filter(r => (r.manualStatus || r.result.overallStatus) === 'APROVADO').length;
+                        const approved = allReports.filter(r => (r.manualStatus || r.overallStatus) === 'APROVADO').length;
                         return Math.round((approved / allReports.length) * 100) + '%';
                     })()}
                 </div>
@@ -187,16 +189,16 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                             <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>{new Date(report.timestamp).toLocaleDateString()}</td>
                             <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>
                                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
-                                    (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-                                    (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 
-                                    (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                                    (report.manualStatus || report.overallStatus) === 'APROVADO' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+                                    (report.manualStatus || report.overallStatus) === 'REPROVADO' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 
+                                    (report.manualStatus || report.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                                 }`}>
                                     <span className={`w-1.5 h-1.5 rounded-full ${
-                                        (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-500' :
-                                        (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-500' : 
-                                        (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-500' : 'bg-blue-500'
+                                        (report.manualStatus || report.overallStatus) === 'APROVADO' ? 'bg-green-500' :
+                                        (report.manualStatus || report.overallStatus) === 'REPROVADO' ? 'bg-red-500' : 
+                                        (report.manualStatus || report.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-500' : 'bg-blue-500'
                                     }`}></span>
-                                    {report.manualStatus || report.result.overallStatus}
+                                    {report.manualStatus || report.overallStatus}
                                 </span>
                             </td>
                             <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-right space-x-3`}>
@@ -226,6 +228,17 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                     )}
                 </tbody>
             </table>
+            
+            {onLoadMore && allReports.length > 0 && allReports.length % 50 === 0 && (
+                <div className="flex justify-center p-4 border-t border-gray-100 dark:border-gray-800">
+                    <button 
+                        onClick={onLoadMore}
+                        className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-prosas-blue dark:hover:border-prosas-blue text-sm font-bold text-gray-600 dark:text-gray-300 py-2 px-6 rounded shadow-sm hover:shadow transition-all"
+                    >
+                        Carregar Mais Resultados
+                    </button>
+                </div>
+            )}
         </div>
     </motion.div>
   );

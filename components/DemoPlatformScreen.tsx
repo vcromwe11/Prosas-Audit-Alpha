@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { AppStage } from '../types';
 import { useAnalysis } from '../src/contexts/AnalysisContext';
 import { useAuth } from '../src/contexts/AuthContext';
 import ReportViewer from './ReportViewer';
+import { getReportResult } from '../services/storageService';
 
 type DemoView = 'HOME' | 'EDITAIS_LIST' | 'EDITAL_PROJECTS' | 'PROJECT_DETAILS';
 
@@ -28,6 +29,26 @@ export const DemoPlatformScreen: React.FC<{
     const [evalSubTab, setEvalSubTabState] = useState<'Proposta completa' | 'Análise de Compliance' | 'Inserir pareceres' | 'Parecer da pergunta'>(cachedEvalSubTab);
     const [isLeftMenuCollapsed, setIsLeftMenuCollapsed] = useState(cachedCurrentView === 'PROJECT_DETAILS');
     const [isRightMenuCollapsed, setIsRightMenuCollapsed] = useState(cachedCurrentView === 'PROJECT_DETAILS');
+    const [preloadedResults, setPreloadedResults] = useState<Record<string, any>>({});
+
+    // Pre-fetch results when an edital is selected to avoid loading screens
+    useEffect(() => {
+        if (selectedEdital && groupedReports[selectedEdital]) {
+            const reports = groupedReports[selectedEdital];
+            reports.forEach(async (report) => {
+                if (!report.result && !preloadedResults[report.id]) {
+                    try {
+                        const res = await getReportResult(report.id);
+                        if (res) {
+                            setPreloadedResults(prev => ({ ...prev, [report.id]: res }));
+                        }
+                    } catch (e) {
+                        console.error('Failed to prefetch report', report.id, e);
+                    }
+                }
+            });
+        }
+    }, [selectedEdital, groupedReports]);
 
     // Wrappers to update both local state and cache
     const setCurrentView = (val: DemoView) => { 
@@ -143,6 +164,15 @@ export const DemoPlatformScreen: React.FC<{
         );
     };
 
+    const handleUpdateReportDemo = (report: any) => {
+        if (onUpdateReport) {
+            onUpdateReport(report);
+        }
+        if (selectedProjectInfo && selectedProjectInfo.id === report.id) {
+            setSelectedProjectInfo(report);
+        }
+    };
+
     const renderEditalProjects = () => {
         const projetos = (selectedEdital && groupedReports[selectedEdital]) ? groupedReports[selectedEdital] : [];
 
@@ -250,7 +280,19 @@ export const DemoPlatformScreen: React.FC<{
                                 {projetos.map(proj => (
                                     <tr key={proj.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:bg-gray-800/50 transition-colors">
                                         <td className="p-3 text-center"><input type="checkbox" /></td>
-                                        <td className="p-3 text-center text-gray-400"><i className="fas fa-clipboard-check text-lg"></i></td>
+                                        <td className="p-3 text-center text-gray-400">
+                                            {proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus ? (
+                                                <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold ${
+                                                    (proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'APROVADO' ? 'bg-green-100 text-green-700' :
+                                                    (proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'REPROVADO' ? 'bg-red-100 text-red-700' : 
+                                                    (proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'
+                                                }`}>
+                                                    {(proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus)}
+                                                </span>
+                                            ) : (
+                                                <i className="fas fa-clipboard-check text-lg"></i>
+                                            )}
+                                        </td>
                                         <td className="p-3 text-center text-gray-400"><i className="far fa-comment-alt text-lg"></i></td>
                                         <td className="p-3 text-gray-400">--</td>
                                         <td className="p-3">
@@ -401,27 +443,31 @@ export const DemoPlatformScreen: React.FC<{
                                                         </div>
                                                     </div>
                                                 </div>
-                                                <div className="h-8 w-px bg-gray-200"></div>
+                                                <div className="h-8 w-px bg-gray-200 dark:bg-gray-700"></div>
                                                 <div>
                                                     <div className="text-xs text-gray-500 dark:text-gray-400">Status</div>
                                                     <div className="font-bold text-gray-800 dark:text-gray-100">
-                                                        {selectedProjectInfo.manualStatus || selectedProjectInfo.result?.overallStatus || '--'}
+                                                        {selectedProjectInfo.manualStatus || selectedProjectInfo.overallStatus || (selectedProjectInfo.result || preloadedResults[selectedProjectInfo.id])?.overallStatus || '--'}
                                                     </div>
                                                 </div>
-                                                <div className="h-8 w-px bg-gray-200"></div>
+                                                <div className="h-8 w-px bg-gray-200 dark:bg-gray-700"></div>
                                                 <div>
                                                     <div className="text-xs text-gray-500 dark:text-gray-400">Score de Risco</div>
                                                     <div className="font-bold text-gray-800 dark:text-gray-100">
-                                                        {(selectedProjectInfo.result?.overallStatus === 'REPROVADO' || selectedProjectInfo.result?.overallStatus === 'APROVADO COM RESSALVAS') ? 'ALTO' : 'BAIXO'}
+                                                        {(selectedProjectInfo.overallStatus === 'REPROVADO' || selectedProjectInfo.overallStatus === 'APROVADO COM RESSALVAS' || (selectedProjectInfo.result || preloadedResults[selectedProjectInfo.id])?.overallStatus === 'REPROVADO' || (selectedProjectInfo.result || preloadedResults[selectedProjectInfo.id])?.overallStatus === 'APROVADO COM RESSALVAS') ? 'ALTO' : 'BAIXO'}
                                                     </div>
                                                 </div>
                                             </div>
 
                                             <ReportViewer 
-                                                report={selectedProjectInfo} 
+                                                key={selectedProjectInfo.id}
+                                                report={{
+                                                    ...selectedProjectInfo,
+                                                    result: selectedProjectInfo.result || preloadedResults[selectedProjectInfo.id]
+                                                }} 
                                                 onBack={() => {}} 
                                                 onGoToDashboard={() => {}} 
-                                                onUpdateReport={onUpdateReport}
+                                                onUpdateReport={handleUpdateReportDemo}
                                                 userRole={user?.role} 
                                                 userName={user?.name || user?.displayName || 'Analista'}
                                                 isDemoMode={true}

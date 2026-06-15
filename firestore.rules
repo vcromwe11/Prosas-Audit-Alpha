@@ -59,17 +59,19 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       
       function isValidReport(data) {
-        return data.keys().hasAll(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result'])
-          && data.keys().hasOnly(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result', 'manualStatus', 'userNotes', 'promptId', 'evaluatedBy', 'evaluatedAt'])
+        return data.keys().hasAll(['id', 'userId', 'editalName', 'candidateName', 'timestamp'])
+          && data.keys().hasOnly(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result', 'manualStatus', 'userNotes', 'promptId', 'evaluatedBy', 'evaluatedAt', 'overallStatus', 'documentHash'])
           && isValidString(data.id, 1, 100)
           && isValidString(data.userId, 1, 100)
           && isValidString(data.editalName, 0, 500)
           && isValidString(data.candidateName, 0, 500)
-          && isValidString(data.cnpj, 0, 50)
+          && (!('cnpj' in data) || data.cnpj == null || isValidString(data.cnpj, 0, 50))
           && data.timestamp is number
           && data.timestamp > 0
-          && isValidString(data.result, 2, 800000)
+          && (!('result' in data) || data.result == null || isValidString(data.result, 2, 800000))
           && (!('manualStatus' in data) || data.manualStatus == null || isValidString(data.manualStatus, 0, 50))
+          && (!('overallStatus' in data) || data.overallStatus == null || isValidString(data.overallStatus, 0, 50))
+          && (!('documentHash' in data) || data.documentHash == null || isValidString(data.documentHash, 0, 200))
           && (!('userNotes' in data) || data.userNotes == null || isValidString(data.userNotes, 0, 5000))
           && (!('promptId' in data) || data.promptId == null || isValidString(data.promptId, 0, 100))
           && (!('evaluatedBy' in data) || data.evaluatedBy == null || isValidString(data.evaluatedBy, 0, 150))
@@ -85,6 +87,26 @@ service cloud.firestore {
         && isValidReport(request.resource.data);
         
       allow delete: if isAuthenticated() && (isAdmin() || request.auth.uid == resource.data.userId);
+
+      // Detailed subcollection of a report
+      match /details/{detailId} {
+        allow read: if isAuthenticated();
+        allow create, update: if isAuthenticated() && detailId == 'content' && (
+          !exists(/databases/$(database)/documents/reports/$(reportId)) ||
+          get(/databases/$(database)/documents/reports/$(reportId)).data.userId == request.auth.uid
+        );
+        allow delete: if isAuthenticated() && (
+          !exists(/databases/$(database)/documents/reports/$(reportId)) ||
+          get(/databases/$(database)/documents/reports/$(reportId)).data.userId == request.auth.uid ||
+          isAdmin()
+        );
+      }
+    }
+
+    // Audit logs
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
     }
 
     // Global Prompts collection

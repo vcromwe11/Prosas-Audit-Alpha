@@ -347,22 +347,35 @@ export const saveReport = async (editalName: string, result: AuditResult, prompt
   }
 };
 
+const reportResultCache = new Map<string, AuditResult>();
+
+export const getReportResultSync = (reportId: string): AuditResult | null => {
+  return reportResultCache.get(reportId) || null;
+};
+
 export const getReportResult = async (reportId: string): Promise<AuditResult | null> => {
   if (!auth.currentUser) return null;
+  if (reportResultCache.has(reportId)) {
+    return reportResultCache.get(reportId) || null;
+  }
   const path = `reports/${reportId}/details/content`;
   try {
     const docRef = doc(db, path);
     const snapshot = await getDoc(docRef);
     if (snapshot.exists() && snapshot.data().result) {
       const data = snapshot.data();
-      return typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+      const result = typeof data.result === 'string' ? JSON.parse(data.result) : data.result;
+      reportResultCache.set(reportId, result);
+      return result;
     }
     
     // Fallback for legacy items where result might still be directly inside the document.
     const legacySnapshot = await getDoc(doc(db, 'reports', reportId));
     if (legacySnapshot.exists() && legacySnapshot.data().result) {
       const legacyData = legacySnapshot.data();
-      return typeof legacyData.result === 'string' ? JSON.parse(legacyData.result) : legacyData.result;
+      const legacyResult = typeof legacyData.result === 'string' ? JSON.parse(legacyData.result) : legacyData.result;
+      reportResultCache.set(reportId, legacyResult);
+      return legacyResult;
     }
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, path);

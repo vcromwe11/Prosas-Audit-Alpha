@@ -81,6 +81,27 @@
         "timestamp": { "type": "number" }
       },
       "required": ["id", "key", "text", "updatedBy", "timestamp"]
+    },
+    "ReportDetail": {
+      "title": "ReportDetail",
+      "description": "Dense details of a saved report",
+      "type": "object",
+      "properties": {
+        "result": { "type": "string", "description": "JSON stringified AuditResult" }
+      },
+      "required": ["result"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "An entry logging a user's action for auditing purposes",
+      "type": "object",
+      "properties": {
+        "action": { "type": "string" },
+        "timestamp": { "type": "number" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string" }
+      },
+      "required": ["action", "timestamp", "userId", "userEmail"]
     }
   },
   "firestore": {
@@ -107,6 +128,18 @@
     "global_prompts/{promptId}": {
       "schema": { "$ref": "#/entities/GlobalPrompt" },
       "description": "Global master prompts"
+    },
+    "reports/{reportId}": {
+      "schema": { "$ref": "#/entities/Report" },
+      "description": "Audit reports shared globally"
+    },
+    "reports/{reportId}/details/{detailId}": {
+      "schema": { "$ref": "#/entities/ReportDetail" },
+      "description": "Full detailed findings of an audit report"
+    },
+    "audit_logs/{logId}": {
+      "schema": { "$ref": "#/entities/AuditLog" },
+      "description": "Auditable log entries"
     }
   }
 }

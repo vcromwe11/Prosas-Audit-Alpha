@@ -1203,7 +1203,7 @@ const App: React.FC = () => {
                   exit={{ opacity: 0, y: -10 }}
                   transition={{ duration: 0.2 }}
               >
-                  <ReportViewer report={selectedReport} onBack={() => setStage(previousStage)} onGoToDashboard={() => handleSetStage(AppStage.DASHBOARD)} onUpdateReport={handleUpdateReport} userRole={user?.role} userName={user?.name || user?.displayName || 'Analista'} />
+                  <ReportViewer key={selectedReport.id} report={selectedReport} onBack={() => setStage(previousStage)} onGoToDashboard={() => handleSetStage(AppStage.DASHBOARD)} onUpdateReport={handleUpdateReport} userRole={user?.role} userName={user?.name || user?.displayName || 'Analista'} />
               </motion.div>
           )}
 

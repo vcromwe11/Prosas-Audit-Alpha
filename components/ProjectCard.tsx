@@ -11,6 +11,7 @@ interface Props {
   onTriggerWithAuth: () => void;
   onCancel: () => void;
   onFileSelect: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onRepoSelect?: () => void;
   onReset: () => void;
   onViewReport: (report: SavedReport) => void;
 }
@@ -25,6 +26,7 @@ const ProjectCard: React.FC<Props> = ({
     onTriggerWithAuth,
     onCancel,
     onFileSelect,
+    onRepoSelect,
     onReset,
     onViewReport
 }) => {
@@ -155,10 +157,17 @@ const ProjectCard: React.FC<Props> = ({
                         <div>
                             <i className="fas fa-cloud-upload-alt text-gray-300 dark:text-gray-600 text-4xl mb-3"></i>
                             <p className="text-sm text-gray-400 dark:text-gray-500 mb-4">Proposta (PDFs ou ZIP)</p>
-                            <label className="cursor-pointer bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue text-gray-600 dark:text-gray-300 font-bold py-2 px-4 rounded transition-all active:scale-[0.98] inline-flex items-center gap-2 text-sm" title="Carregar os arquivos do projeto enviados pelo candidato">
-                                <input type="file" accept="application/pdf,.zip" multiple onChange={onFileSelect} className="hidden" />
-                                Selecionar Arquivos
-                            </label>
+                            <div className="flex flex-col gap-2">
+                                <label className="cursor-pointer bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue text-gray-600 dark:text-gray-300 font-bold py-2 px-4 rounded transition-all active:scale-[0.98] inline-flex items-center justify-center gap-2 text-sm w-full" title="Carregar os arquivos do projeto enviados pelo candidato">
+                                    <input type="file" accept="application/pdf,.zip" multiple onChange={onFileSelect} className="hidden" />
+                                    <i className="fas fa-upload"></i> Upload
+                                </label>
+                                {onRepoSelect && (
+                                    <button onClick={onRepoSelect} className="bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 text-sm font-bold py-2 px-4 rounded transition-all active:scale-[0.98] w-full flex items-center justify-center gap-2 border border-transparent">
+                                        <i className="fas fa-folder-open"></i> Repositório
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     )}
                 </div>

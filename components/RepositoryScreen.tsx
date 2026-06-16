@@ -29,6 +29,8 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   
+  const subfolders = folders.filter(f => selectedFolder ? f.parentId === selectedFolder.id : !f.parentId);
+  
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
   const [editingFolderName, setEditingFolderName] = useState('');
 
@@ -201,7 +203,14 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
     const handleDownloadFile = async (file: RepositoryFile) => {
         try {
             const url = await getFileDownloadUrl(file);
-            window.open(url, '_blank');
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = file.name;
+            a.target = '_blank';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 100);
         } catch (e: any) {
             console.error("Download fail:", e);
             alert(`Erro ao fazer download: ${e.message}`);
@@ -402,9 +411,23 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                 
                 <>
                     <div className="p-4 border-b border-gray-100 dark:border-gray-800 flex justify-between items-center bg-white dark:bg-gray-900 sticky top-0 z-10">
-                        <div>
-                            <h3 className="font-semibold text-gray-800 dark:text-gray-200">{selectedFolder ? selectedFolder.name : 'Arquivos na Raiz'}</h3>
-                            <p className="text-xs text-gray-500">{files.length} arquivo(s)</p>
+                        <div className="flex items-center gap-3">
+                            {selectedFolder && (
+                                <button 
+                                    onClick={() => {
+                                        const parentFolder = folders.find(f => f.id === selectedFolder.parentId);
+                                        setSelectedFolder(parentFolder || null);
+                                    }}
+                                    className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-full text-gray-500 transition-colors"
+                                    title="Voltar para pasta anterior"
+                                >
+                                    <i className="fas fa-arrow-left"></i>
+                                </button>
+                            )}
+                            <div>
+                                <h3 className="font-semibold text-gray-800 dark:text-gray-200">{selectedFolder ? selectedFolder.name : 'Arquivos na Raiz'}</h3>
+                                <p className="text-xs text-gray-500">{subfolders.length} pasta(s), {files.length} arquivo(s)</p>
+                            </div>
                         </div>
                         
                         <div className="flex gap-2">
@@ -441,6 +464,21 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                         }}
                     >
                         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {subfolders.map(folder => (
+                                <div 
+                                    key={folder.id} 
+                                    onClick={() => setSelectedFolder(folder)}
+                                    className="border border-blue-100 dark:border-blue-800 rounded-lg p-4 bg-blue-50/50 dark:bg-blue-900/20 hover:shadow-md transition-shadow group flex flex-col cursor-pointer"
+                                >
+                                    <div className="flex-1 flex items-start gap-3">
+                                        <i className="fas fa-folder text-prosas-blue dark:text-blue-400 text-2xl"></i>
+                                        <div className="flex-1 min-w-0">
+                                            <h4 className="text-sm font-bold text-slate-800 dark:text-gray-200 truncate" title={folder.name}>{folder.name}</h4>
+                                            <p className="text-xs text-slate-500 dark:text-gray-400 mt-1">Pasta</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
                             {files.map(file => (
                                     <div 
                                         key={file.id} 
@@ -502,7 +540,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
                                 ))}
                             </div>
                             
-                            {files.length === 0 && !isUploading && (
+                            {files.length === 0 && subfolders.length === 0 && !isUploading && (
                                 <div className="h-full flex flex-col items-center justify-center text-gray-400 py-12">
                                     <i className="fas fa-inbox text-4xl mb-3 opacity-50"></i>
                                     <p>Esta pasta está vazia.</p>

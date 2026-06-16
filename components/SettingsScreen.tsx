@@ -54,15 +54,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   
   const honeypotGifs = [
       "https://media.giphy.com/media/JIX9t2j0ZTN9S/giphy.gif",
-      "https://media.giphy.com/media/V4NSR1NG2p0Ke/giphy.gif",
-      "https://media.giphy.com/media/10X22vmagVvhOo/giphy.gif",
-      "https://media.giphy.com/media/xT0xeJpnrWC4XWblWQ/giphy.gif",
-      "https://media.giphy.com/media/13HgwGsXF0aiGY/giphy.gif",
-      "https://media.giphy.com/media/YQitE4YNQx8INZNNJM/giphy.gif",
-      "https://media.giphy.com/media/M7E5GIMTkHLzO/giphy.gif",
-      "https://media.giphy.com/media/Ch31IjylFca8o/giphy.gif",
-      "https://media.giphy.com/media/A06UF3macafXW/giphy.gif",
-      "https://media.giphy.com/media/o0vwzuFwCGAFO/giphy.gif"
+      "https://media.giphy.com/media/13HgwGsXF0aiGY/giphy.gif"
   ];
 
   const generateFakeAddress = (state: string) => {

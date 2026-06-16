@@ -1,35 +1,35 @@
 
 export const PROMPTS = {
     AUTH_RULES_GENERATION: `
-Você é um especialista em análise documental de editais e chamadas públicas e também um programador JavaScript.
-Analise o REGULAMENTO e o MODELO DE FORMULÁRIO abaixo e realize duas tarefas:
+Você é um especialista em análise documental de editais e chamadas públicas.
+Analise o REGULAMENTO e o MODELO DE FORMULÁRIO abaixo.
 
 TAREFA 1: Identifique a DATA DE ABERTURA DAS INSCRIÇÕES (o primeiro dia em que as inscrições foram abertas) no REGULAMENTO. Esta será a nossa data de referência para validade de documentos.
 
-TAREFA 2: Identifique se os seguintes documentos são exigidos:
-1. Cartão CNPJ (emitido há no máximo 3 meses da data de abertura das inscrições)
-2. Certificado de Regularidade do FGTS (CRF) (em situação regular, emitido há no máximo 3 meses)
-3. Certidão Negativa de Débitos (CND) Federal (emitida há no máximo 3 meses)
-4. Certidão Negativa de Débitos Trabalhistas (CNDT) (emitida há no máximo 3 meses)
-5. Certidão Negativa de Débitos (CND) Estadual (emitida há no máximo 3 meses)
-6. Certidão Negativa de Débitos (CND) Municipal (emitida há no máximo 3 meses)
+TAREFA 2: Verifique quais dos seguintes modelos de documentos da nossa biblioteca são exigidos no edital:
+1. "Cartão CNPJ"
+2. "CRF FGTS"
+3. "CND Federal (União)"
+4. "CND Trabalhista (CNDT)"
+5. "Falência / Recuperação Judicial"
+6. "CND Estadual"
+7. "CND Municipal"
 
-FOQUE EXCLUSIVAMENTE nestes documentos. Ignore qualquer outro documento mencionado para esta etapa de autenticação determinística.
+Para o Cartão CNPJ, identifique também se o edital exige um tempo mínimo de abertura/existência da empresa (ex: 1 ano, 2 anos, 3 anos).
 
-Para cada um desses documentos que for mencionado como obrigatório, extraia as regras de validação.
-
-Regras para o JSON:
-- referenceDate: A data de abertura das inscrições encontrada no formato YYYY-MM-DD.
-- rules: Lista de regras no formato abaixo:
-    - questionPrefix: O número da questão (ex: "50", "51", "55") que precede a descrição do documento. **IMPORTANTE: Procure este número prioritariamente no MODELO DE FORMULÁRIO**, pois ele indica a posição exata onde o candidato deve anexar o arquivo. Se não encontrar no formulário, procure no REGULAMENTO.
-    - documentType: Nome padrão do documento (ex: "Cartão CNPJ", "CRF FGTS", "CND Federal", "CNDT", "CND Estadual", "CND Municipal").
-    - dataToScrape: O campo específico da data de emissão ou validade (ex: "Data de Emissão", "Data de Validade", "Emitido em").
-    - formatRegex: Regex JS para extrair a data. Para o Cartão CNPJ, use: "Emitido no dia\\\\s*(\\\\d{2}/\\\\d{2}/\\\\d{4})". Para CNDs e afins com data de validade, procure capturar a data final de validade.
-    - validationRule: Código JS que retorna true se a data extraída for válida em relação à data de referência. Use a função auxiliar 'isWithinThreeMonths(value, referenceDate)' para datas de emissão. Se for uma data de validade garantindo que o documento AINDA ESTAVA VÁLIDO no momento de inscrição, use 'isValidTo(value, referenceDate)'. Exemplo: "isValidTo(value, referenceDate)".
-    - approvalTrigger: Mensagem de sucesso (ex: "Documento dentro do prazo de validade de 3 meses.").
-    - rejectionTrigger: Mensagem de erro detalhada (ex: "Documento emitido há mais de 3 meses ou data não identificada.").
-
-IMPORTANTE: Se o documento for o "Cartão CNPJ", o sistema agora possui validação determinística avançada que verifica também a Situação Cadastral (ATIVA). Certifique-se de que o documentType seja exatamente "Cartão CNPJ".
+Retorne ESTRITAMENTE um JSON no seguinte formato:
+{
+  "referenceDate": "YYYY-MM-DD",
+  "requiredDocuments": [
+    {
+      "templateName": "Nome exato de um dos modelos listados acima",
+      "questionPrefix": "O número da questão (ex: '50', '1.1') onde o documento é solicitado (procure prioritariamente no MODELO DE FORMULÁRIO)",
+      "customValidationRule": "OPCIONAL. Apenas para o CNPJ, se o edital exigir X anos de abertura, substitua o X no código JS: 'isWithinThreeMonths(value, referenceDate) && getAgeInYears(openingDate, referenceDate) >= X'. Se não houver exigência, não mande esse campo.",
+      "customApprovalTrigger": "OPCIONAL. Ajuste caso o CNPJ precise de X anos (ex: '...e com mais de 1 ano de abertura').",
+      "customRejectionTrigger": "OPCIONAL. Ajuste caso o CNPJ precise de X anos (ex: '...ou tempo menor que 1 ano.')."
+    }
+  ]
+}
 `,
     CRITERIA_GENERATION_STANDARD: `
 Você é um especialista em análise de editais e leis de incentivo.

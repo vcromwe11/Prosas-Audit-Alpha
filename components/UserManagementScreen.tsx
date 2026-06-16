@@ -105,7 +105,8 @@ const UserManagementScreen: React.FC = () => {
             setNewUserFunction('');
             setNewUserRole('viewer');
         } catch (error: any) {
-            setCreateError('Erro ao criar usuário. O e-mail pode já estar em uso ou a senha é muito fraca.');
+            console.error("User creation error:", error);
+            setCreateError(`Erro ao criar usuário: ${error.message || 'O e-mail pode já estar em uso ou a senha é muito fraca.'}`);
         } finally {
             setIsCreating(false);
         }

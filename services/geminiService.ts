@@ -5,12 +5,13 @@ import { PROMPTS } from "../prompts";
 import { getGlobalPrompt } from "./storageService";
 import { fileToBase64 } from "./pdfService";
 import { AuditResult, DocumentAuthRule } from "../types";
+import { RULE_TEMPLATES } from "./ruleTemplates";
 
 const getClient = () => {
-    if (!process.env.API_KEY) {
-        throw new Error("API Key is missing.");
-    }
-    return new GoogleGenAI({ apiKey: process.env.API_KEY });
+    return new GoogleGenAI({ 
+        apiKey: "proxy", // API key is injected by the proxy server
+        httpOptions: { baseUrl: window.location.origin + "/api/genai" }
+    });
 };
 
 // Helper para economizar tokens removendo espaços vazios excessivos
@@ -50,9 +51,28 @@ ${formTemplateText.substring(0, 15000)}
         });
         const text = response.text || "{}";
         const result = JSON.parse(text);
-        const rules = (result.rules || []) as DocumentAuthRule[];
+        
+        const generatedDocs = result.requiredDocuments || [];
+        const builtRules: DocumentAuthRule[] = [];
+        
+        for (const doc of generatedDocs) {
+            const template = RULE_TEMPLATES.find(t => t.name === doc.templateName);
+            if (template) {
+                builtRules.push({
+                    id: Math.random().toString(36).substring(7),
+                    questionPrefix: doc.questionPrefix || template.rule.questionPrefix,
+                    documentType: template.rule.documentType,
+                    dataToScrape: template.rule.dataToScrape,
+                    formatRegex: template.rule.formatRegex,
+                    validationRule: doc.customValidationRule || template.rule.validationRule,
+                    approvalTrigger: doc.customApprovalTrigger || template.rule.approvalTrigger,
+                    rejectionTrigger: doc.customRejectionTrigger || template.rule.rejectionTrigger
+                });
+            }
+        }
+
         return {
-            rules: rules.map(r => ({ ...r, id: Math.random().toString(36).substring(7) })),
+            rules: builtRules,
             referenceDate: result.referenceDate || ""
         };
     } catch (error) {
@@ -61,7 +81,7 @@ ${formTemplateText.substring(0, 15000)}
     }
 };
 
-export const generateCriteriaFromRegulation = async (regulationText: string, mode: PromptGenerationMode = 'standard'): Promise<string> => {
+export const generateCriteriaFromRegulation = async (regulationText: string, mode: PromptGenerationMode = 'standard', authRules: DocumentAuthRule[] = []): Promise<string> => {
     const ai = getClient();
     const model = 'gemini-3.1-pro-preview'; 
     
@@ -75,8 +95,18 @@ export const generateCriteriaFromRegulation = async (regulationText: string, mod
         promptInstruction = await getGlobalPrompt('CRITERIA_GENERATION_STANDARD', PROMPTS.CRITERIA_GENERATION_STANDARD);
     }
 
+    let extraInstruction = '';
+    if (authRules.length > 0) {
+        const docList = authRules.map(r => r.documentType).join(', ');
+        extraInstruction = `
+
+Atenção: Os validadores automáticos do sistema já vão cobrir a data de validade, emissão e status primário para os seguintes documentos: [${docList}].
+Portanto, para estes documentos, VOCÊ NÃO PRECISA criar regras para checar se eles estão dentro do prazo ou válidos.
+Apenas crie regras de CRUZAMENTO DE DADOS para eles (exemplo: "O CNPJ do 'Cartão CNPJ' precisa ser igual ao do 'Contrato Social'").`;
+    }
+
     const prompt = `
-${promptInstruction}
+${promptInstruction}${extraInstruction}
 
 Regulamento:
 """

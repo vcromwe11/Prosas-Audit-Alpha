@@ -2,7 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../../types';
 import { auth, googleProvider } from '../../firebase';
 import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, linkWithPopup } from 'firebase/auth';
-import { subscribeToUsers } from '../../services/storageService';
+import { subscribeToUsers, updateUserProfile } from '../../services/storageService';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -53,6 +53,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (appUser) {
                     setUser(appUser);
                 } else {
+                    // Do not attempt to persist standard new users here to prevent rule errors.
+                    // syncUserProfile in App.tsx correctly handles the pre-registration logic and signout.
                     setUser({
                         uid: firebaseUser.uid,
                         name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Usuário',

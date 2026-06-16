@@ -1,17 +1,18 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CandidateAnalysis, AppStage, AuditContext, UserProfile, SavedReport, Idea, IdeaComment } from './types';
+import { CandidateAnalysis, AppStage, AuditContext, UserProfile, SavedReport, Idea, IdeaComment, RepositoryFile } from './types';
 import { extractTextFromPdf } from './services/pdfService';
 import { extractPdfsFromZip } from './services/zipService';
 import { runDocumentAudit, generateCriteriaFromRegulation, generateAuthRulesFromRegulation, PromptGenerationMode } from './services/geminiService';
-import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribeToIdeas, saveIdea, saveComment, subscribeToComments, deleteIdea, deleteReport, savePrompt, getPrompt, migrateUserReports, logAuditAction } from './services/storageService';
+import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribeToIdeas, saveIdea, saveComment, subscribeToComments, deleteIdea, deleteReport, savePrompt, getPrompt, migrateUserReports, logAuditAction, getRepositoryFileAsFile } from './services/storageService';
 import { PROMPTS } from './prompts';
 import { findBackupFile, uploadToDrive, downloadFromDrive } from './services/driveService';
 import { DEFAULT_DOCUMENT_CRITERIA } from './constants';
 import { RULE_TEMPLATES, scanFilesForRules } from './services/ruleTemplates';
 import ReportViewer from './components/ReportViewer';
 import ProjectCard from './components/ProjectCard';
+import { RepositoryPickerDialog } from './components/RepositoryPickerDialog';
 import { auth, googleProvider, db } from './firebase';
 import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, linkWithPopup } from 'firebase/auth';
 import { getDocFromServer, doc } from 'firebase/firestore';
@@ -300,6 +301,8 @@ const App: React.FC = () => {
   // Analysis State
   const [loadingContext, setLoadingContext] = useState(false);
   const [isGeneratingCriteria, setIsGeneratingCriteria] = useState(false);
+  const [isRepoPickerOpen, setIsRepoPickerOpen] = useState(false);
+  const [repoPickerTarget, setRepoPickerTarget] = useState<string | number | null>(null);
   const [context, setContext] = useState<AuditContext>({
     editalTitle: '',
     regulationText: '',
@@ -331,16 +334,24 @@ const App: React.FC = () => {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       if (currentUser) {
-        const { syncUserProfile } = await import('./services/storageService');
-        const profile = await syncUserProfile();
-        setUser(profile || {
-          uid: currentUser.uid,
-          name: currentUser.displayName || currentUser.email?.split('@')[0] || "Usuário",
-          email: currentUser.email || "",
-          avatarUrl: currentUser.photoURL || `https://ui-avatars.com/api/?name=${currentUser.email}&background=C13B2E&color=fff&size=128`,
-          role: 'viewer'
-        });
-        handleSetStage(AppStage.DASHBOARD);
+        try {
+          const { syncUserProfile } = await import('./services/storageService');
+          const profile = await syncUserProfile();
+          setUser(profile || {
+            uid: currentUser.uid,
+            name: currentUser.displayName || currentUser.email?.split('@')[0] || "Usuário",
+            email: currentUser.email || "",
+            avatarUrl: currentUser.photoURL || `https://ui-avatars.com/api/?name=${currentUser.email}&background=C13B2E&color=fff&size=128`,
+            role: 'viewer'
+          });
+          setAuthError('');
+          handleSetStage(AppStage.DASHBOARD);
+        } catch (error: any) {
+          console.error("Authentication check failed:", error);
+          setAuthError(error.message || "Erro na validação do usuário. Contate um administrador.");
+          setUser(null);
+          handleSetStage(AppStage.LOGIN);
+        }
       } else {
         setUser(null);
         handleSetStage(AppStage.LOGIN);
@@ -590,6 +601,21 @@ const App: React.FC = () => {
 
   // --- ANALYSIS HANDLERS ---
 
+  const handleRepoFileSelect = async (repoFile: RepositoryFile) => {
+      try {
+          const file = await getRepositoryFileAsFile(repoFile);
+          const mockEvent = { target: { files: [file] } } as any;
+          if (typeof repoPickerTarget === 'string' && ['regulation', 'form', 'misc'].includes(repoPickerTarget)) {
+              handleContextUpload(mockEvent, repoPickerTarget as 'regulation' | 'form' | 'misc');
+          } else if (typeof repoPickerTarget === 'number') {
+              handleSlotFilesSelected(mockEvent, repoPickerTarget);
+          }
+      } catch (err) {
+          console.error("Error pulling file from repo:", err);
+          alert("Erro ao puxar documento do repositório");
+      }
+  };
+
   const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'regulation' | 'form' | 'misc') => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -619,6 +645,37 @@ const App: React.FC = () => {
   };
 
   const [isGeneratingAuthRules, setIsGeneratingAuthRules] = useState(false);
+  const [isRegexTestModalOpen, setIsRegexTestModalOpen] = useState(false);
+  const [regexTestTarget, setRegexTestTarget] = useState({ regex: '', index: -1 });
+  const [regexTestText, setRegexTestText] = useState('');
+  const [regexTestResult, setRegexTestResult] = useState<{ match: string | null, error: string | null }>({ match: null, error: null });
+
+  const runRegexTest = (text: string, regexStr: string) => {
+    setRegexTestText(text);
+    if (!text || !regexStr) {
+        setRegexTestResult({ match: null, error: "Insira texto para testar." });
+        return;
+    }
+    try {
+        let flags = 'i';
+        let parsedRegexStr = regexStr;
+        if (regexStr.startsWith('/') && regexStr.lastIndexOf('/') > 0) {
+            const lastSlash = regexStr.lastIndexOf('/');
+            parsedRegexStr = regexStr.substring(1, lastSlash);
+            flags = regexStr.substring(lastSlash + 1);
+        }
+        const regex = new RegExp(parsedRegexStr, flags);
+        const match = text.match(regex);
+        if (match) {
+            const extracted = match[1] !== undefined ? match[1] : match[0];
+            setRegexTestResult({ match: extracted, error: null });
+        } else {
+            setRegexTestResult({ match: null, error: "Nenhum match encontrado." });
+        }
+    } catch (e: any) {
+        setRegexTestResult({ match: null, error: `Erro no regex: ${e.message}` });
+    }
+  };
 
   const handleGenerateAuthRules = async () => {
       if (!context.regulationText) return;
@@ -645,7 +702,7 @@ const App: React.FC = () => {
       setIsPromptMenuOpen(false);
       await logAuditAction('GERAR_CRITERIOS_EDITAL', { mode });
       try {
-          const newCriteria = await generateCriteriaFromRegulation(context.regulationText, mode);
+          const newCriteria = await generateCriteriaFromRegulation(context.regulationText, mode, context.authRules || []);
           if (newCriteria) {
               setContext(prev => ({ ...prev, criteriaText: newCriteria }));
           }
@@ -821,12 +878,30 @@ const App: React.FC = () => {
             setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
         } else {
             setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'AI_PROMPT' } : c));
+            
+            let criteriaForAi = context.criteriaText;
+            if (authReport) {
+                const optimizedInstruction = analysisMode === 'IA_OTIMIZADA' 
+                    ? "1. Os documentos descritos no relatório acima JÁ FORAM APROVADOS e não foram anexados agora para poupar processamento. NÃO cobre a existência ou validade deles novamente.\n2."
+                    : "1. Os documentos descritos no relatório acima JÁ FORAM AVALIADOS. Você os recebeu nos anexos, mas pode confiar no status de aprovação do laudo local.\n2.";
+
+                criteriaForAi = `${context.criteriaText}
+
+--- ⚠️ INSTRUÇÃO IMPORTANTE: TRIAGEM AUTOMÁTICA PRÉVIA ⚠️ ---
+O sistema de auditoria local (script) já validou alguns documentos cruciais. Segue o laudo técnico:
+
+${authReport}
+
+INSTRUÇÕES PARA A IA NESTA FASE COMPLEMENTAR:
+${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: número do CNPJ) para CRUZAR com os demais documentos.`;
+            }
+
             // 2. Run AI Analysis
             const aiData = await runDocumentAudit(
                 context.regulationText,
                 context.formTemplateText,
                 context.miscFilesText,
-                context.criteriaText,
+                criteriaForAi,
                 filesForAi,
                 [], // Do not send auth rules to AI anymore
                 abortController.signal,
@@ -1341,14 +1416,21 @@ const App: React.FC = () => {
                                 <i className={`fas fa-book text-4xl mb-4 ${context.regulationText ? 'text-green-500 dark:text-green-400' : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Regulamento (PDF)</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Obrigatório. Contém as regras do edital.</p>
-                                <Tooltip text="Faça o upload do arquivo PDF ou DOCX contendo o regulamento principal do edital" enabled={appSettings.showTooltips} position="top">
-                                  <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                      context.regulationText ? 'bg-white dark:bg-gray-800 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                <div className="flex gap-2">
+                                  <Tooltip text="Faça o upload do arquivo PDF ou DOCX contendo o regulamento principal do edital" enabled={appSettings.showTooltips} position="top">
+                                    <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                        context.regulationText ? 'bg-white dark:bg-gray-800 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                    }`}>
+                                        <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'regulation')} />
+                                        {context.regulationText ? 'Local' : 'Upload Local'}
+                                    </label>
+                                  </Tooltip>
+                                  <button onClick={() => { setRepoPickerTarget('regulation'); setIsRepoPickerOpen(true); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.regulationText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
                                   }`}>
-                                      <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'regulation')} />
-                                      {context.regulationText ? 'Arquivo Carregado' : 'Selecionar'}
-                                  </label>
-                                </Tooltip>
+                                      Repositório
+                                  </button>
+                                </div>
                              </div>
 
                              {/* Form Template Card */}
@@ -1372,14 +1454,21 @@ const App: React.FC = () => {
                                 <i className={`fas fa-file-alt text-4xl mb-4 ${context.formTemplateText ? colorsStyle.accentText : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Modelo de Formulário</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Estrutura da proposta.</p>
-                                <Tooltip text="Opcional. Adicione o modelo visual de formulário do edital se desejar." enabled={appSettings.showTooltips} position="top">
-                                  <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                      context.formTemplateText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
+                                <div className="flex gap-2">
+                                  <Tooltip text="Opcional. Adicione o modelo visual de formulário do edital se desejar." enabled={appSettings.showTooltips} position="top">
+                                    <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                        context.formTemplateText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
+                                    }`}>
+                                        <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'form')} />
+                                        {context.formTemplateText ? 'Local' : 'Upload Local'}
+                                    </label>
+                                  </Tooltip>
+                                  <button onClick={() => { setRepoPickerTarget('form'); setIsRepoPickerOpen(true); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.formTemplateText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
                                   }`}>
-                                      <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'form')} />
-                                      {context.formTemplateText ? 'Carregado' : 'Selecionar'}
-                                  </label>
-                                </Tooltip>
+                                      Repos
+                                  </button>
+                                </div>
                              </div>
 
                              {/* Misc Files Card */}
@@ -1403,14 +1492,21 @@ const App: React.FC = () => {
                                 <i className={`fas fa-paperclip text-4xl mb-4 ${context.miscFilesText ? colorsStyle.accentText : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Outros Anexos</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Manuais ou erratas.</p>
-                                <Tooltip text="Opcional. Inclua erratas, guias, manuais adicionais ou anexos extras relevantes." enabled={appSettings.showTooltips} position="top">
-                                  <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                      context.miscFilesText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
+                                <div className="flex gap-2">
+                                  <Tooltip text="Opcional. Inclua erratas, guias, manuais adicionais ou anexos extras relevantes." enabled={appSettings.showTooltips} position="top">
+                                    <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                        context.miscFilesText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
+                                    }`}>
+                                        <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'misc')} />
+                                        {context.miscFilesText ? 'Local' : 'Upload Local'}
+                                    </label>
+                                  </Tooltip>
+                                  <button onClick={() => { setRepoPickerTarget('misc'); setIsRepoPickerOpen(true); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.miscFilesText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
                                   }`}>
-                                      <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'misc')} />
-                                      {context.miscFilesText ? 'Carregado' : 'Selecionar'}
-                                  </label>
-                                </Tooltip>
+                                      Repos
+                                  </button>
+                                </div>
                              </div>
                         </div>
                    </div>
@@ -1524,11 +1620,11 @@ const App: React.FC = () => {
                                                     onClick={() => {
                                                         const currentTypes = (context.authRules || []).map(r => r.documentType.toLowerCase());
                                                         const uniqueTemplates = RULE_TEMPLATES.filter(
-                                                            t => !currentTypes.includes(t.rule.documentType.toLowerCase())
+                                                            t => !currentTypes.includes(t.rule.documentType.toLowerCase()) && !t.isExperimental
                                                         );
 
                                                         if (uniqueTemplates.length === 0) {
-                                                            alert('Todos os modelos de certidões já foram incluídos!');
+                                                            alert('Todos os modelos de certidões aptos já foram incluídos!');
                                                             return;
                                                         }
 
@@ -1544,7 +1640,7 @@ const App: React.FC = () => {
                                                     }}
                                                     className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-bold flex items-center gap-1.5 cursor-pointer"
                                                 >
-                                                    <i className="fas fa-list-check"></i> Importar Todos os {RULE_TEMPLATES.length} Modelos
+                                                    <i className="fas fa-list-check"></i> Importar Apenas Modelos Prontos ({RULE_TEMPLATES.filter(t => !t.isExperimental).length})
                                                 </button>
                                             </div>
 
@@ -1573,6 +1669,14 @@ const App: React.FC = () => {
                                                             <p className="text-[11px] text-gray-500 dark:text-gray-400 mb-2 leading-relaxed">
                                                                 {tpl.description}
                                                             </p>
+                                                            {tpl.isExperimental && (
+                                                                <div className="mb-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 rounded p-1.5 flex items-start gap-1.5">
+                                                                    <i className="fas fa-hammer text-amber-500 dark:text-amber-400 mt-0.5 text-[10px]"></i>
+                                                                    <span className="text-[10px] text-amber-700 dark:text-amber-400 leading-tight">
+                                                                        {tpl.experimentalWarning || 'Em desenvolvimento.'}
+                                                                    </span>
+                                                                </div>
+                                                            )}
                                                             <div className="flex flex-col gap-1 mb-2.5">
                                                                 <div className="flex items-center justify-between text-[10px]">
                                                                     <span className="text-gray-400 dark:text-gray-500">Regex de Captura:</span>
@@ -1586,6 +1690,7 @@ const App: React.FC = () => {
 
                                                             <button
                                                                 onClick={() => {
+                                                                    if (tpl.isExperimental) return;
                                                                     if (alreadyExists) {
                                                                         setContext(prev => ({
                                                                             ...prev,
@@ -1601,13 +1706,18 @@ const App: React.FC = () => {
                                                                         }));
                                                                     }
                                                                 }}
+                                                                disabled={tpl.isExperimental}
                                                                 className={`w-full text-center py-1.5 rounded text-xs font-bold transition-colors cursor-pointer ${
-                                                                    alreadyExists 
-                                                                        ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400' 
-                                                                        : 'bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-700 dark:hover:bg-indigo-600'
+                                                                    tpl.isExperimental
+                                                                        ? 'bg-gray-100 text-gray-400 dark:bg-gray-700/50 dark:text-gray-500 cursor-not-allowed'
+                                                                        : alreadyExists 
+                                                                            ? 'bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400' 
+                                                                            : 'bg-indigo-600 hover:bg-indigo-700 text-white dark:bg-indigo-700 dark:hover:bg-indigo-600'
                                                                 }`}
                                                             >
-                                                                {alreadyExists ? (
+                                                                {tpl.isExperimental ? (
+                                                                    <span>Indisponível</span>
+                                                                ) : alreadyExists ? (
                                                                     <span className="flex items-center justify-center gap-1"><i className="fas fa-check text-xs"></i> Ativado (Remover)</span>
                                                                 ) : (
                                                                     <span>Ativar Modelo</span>
@@ -1781,81 +1891,153 @@ const App: React.FC = () => {
                                                     <option value="RG/CPF do Representante" />
                                                 </datalist>
                                             </td>
-                                            <td className="py-2 px-2">
-                                                <textarea 
-                                                    value={rule.dataToScrape || ''}
-                                                    onChange={(e) => {
-                                                        const newRules = [...context.authRules];
-                                                        newRules[idx].dataToScrape = e.target.value;
-                                                        setContext(prev => ({ ...prev, authRules: newRules }));
-                                                    }}
-                                                    disabled={user?.role === 'viewer'}
-                                                    rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    placeholder="Ex: Data de Abertura"
-                                                    maxLength={500}
-                                                />
-                                            </td>
-                                            <td className="py-2 px-2">
-                                                <textarea 
-                                                    value={rule.formatRegex || ''}
-                                                    onChange={(e) => {
-                                                        const newRules = [...context.authRules];
-                                                        newRules[idx].formatRegex = e.target.value;
-                                                        setContext(prev => ({ ...prev, authRules: newRules }));
-                                                    }}
-                                                    disabled={user?.role === 'viewer'}
-                                                    rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    placeholder="Ex: DD/MM/AAAA"
-                                                    maxLength={500}
-                                                />
-                                            </td>
-                                            <td className="py-2 px-2">
-                                                <textarea 
-                                                    value={rule.validationRule || ''}
-                                                    onChange={(e) => {
-                                                        const newRules = [...context.authRules];
-                                                        newRules[idx].validationRule = e.target.value;
-                                                        setContext(prev => ({ ...prev, authRules: newRules }));
-                                                    }}
-                                                    disabled={user?.role === 'viewer'}
-                                                    rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    placeholder="Ex: Data <= Edital - 2 anos"
-                                                    maxLength={1000}
-                                                />
-                                            </td>
-                                            <td className="py-2 px-2">
-                                                <textarea 
-                                                    value={rule.approvalTrigger || ''}
-                                                    onChange={(e) => {
-                                                        const newRules = [...context.authRules];
-                                                        newRules[idx].approvalTrigger = e.target.value;
-                                                        setContext(prev => ({ ...prev, authRules: newRules }));
-                                                    }}
-                                                    disabled={user?.role === 'viewer'}
-                                                    rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    placeholder="Ex: CNPJ > 2 anos"
-                                                    maxLength={500}
-                                                />
-                                            </td>
-                                            <td className="py-2 px-2">
-                                                <textarea 
-                                                    value={rule.rejectionTrigger || ''}
-                                                    onChange={(e) => {
-                                                        const newRules = [...context.authRules];
-                                                        newRules[idx].rejectionTrigger = e.target.value;
-                                                        setContext(prev => ({ ...prev, authRules: newRules }));
-                                                    }}
-                                                    disabled={user?.role === 'viewer'}
-                                                    rows={2}
-                                                    className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
-                                                    placeholder="Ex: Reprovado: Tempo inferior a 2 anos"
-                                                    maxLength={500}
-                                                />
-                                            </td>
+                                            {rule.documentType?.trim().toLowerCase() === 'cartão cnpj' ? (
+                                                <td className="py-2 px-2" colSpan={5}>
+                                                    <div className="bg-indigo-50 dark:bg-indigo-900/10 border border-indigo-200 dark:border-indigo-800/40 rounded p-3 text-xs w-full">
+                                                        <div className="font-bold text-indigo-800 dark:text-indigo-300 mb-2 flex items-center gap-2">
+                                                            <i className="fas fa-robot text-sm"></i> 
+                                                            <span>Módulo de Automação de CNPJ Ativado</span>
+                                                        </div>
+                                                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-[11px] text-gray-700 dark:text-gray-300">
+                                                            <div>
+                                                                <span className="font-bold text-gray-900 dark:text-gray-100 block mb-1">🔍 Dados Raspados</span>
+                                                                <ul className="list-disc pl-4 space-y-0.5">
+                                                                    <li>Situação Cadastral</li>
+                                                                    <li>Data de Emissão</li>
+                                                                    <li>Tempo de Fundação</li>
+                                                                </ul>
+                                                            </div>
+                                                            <div>
+                                                                <span className="font-bold text-gray-900 dark:text-gray-100 block mb-1">⚙️ Parâmetros de Validação</span>
+                                                                <label className="text-[10px] text-gray-500 block mb-1">Tempo Mínimo Exigido (Anos):</label>
+                                                                <div className="flex items-center gap-2">
+                                                                    <input 
+                                                                        type="number" 
+                                                                        min="0"
+                                                                        className="w-16 p-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-center font-mono font-bold"
+                                                                        value={rule.validationRule.match(/getAgeInYears\([^,]+,\s*[^)]+\)\s*>=\s*(\d+)/)?.[1] || 2}
+                                                                        onChange={(e) => {
+                                                                            const yrs = e.target.value || '0';
+                                                                            const newRules = [...context.authRules];
+                                                                            newRules[idx].validationRule = `isWithinThreeMonths(value, referenceDate) && getAgeInYears(openingDate, referenceDate) >= ${yrs}`;
+                                                                            newRules[idx].approvalTrigger = `CNPJ Ativo, no prazo, e com mais de ${yrs} anos.`;
+                                                                            newRules[idx].rejectionTrigger = `CNPJ inativo, vencido, ou tempo inferior a ${yrs} anos.`;
+                                                                            setContext(prev => ({ ...prev, authRules: newRules }));
+                                                                        }}
+                                                                        disabled={user?.role === 'viewer'}
+                                                                    />
+                                                                    <span className="text-[10px] text-gray-500">anos</span>
+                                                                </div>
+                                                            </div>
+                                                            <div>
+                                                                <span className="font-bold text-gray-900 dark:text-gray-100 block mb-1">📅 Data de Referência</span>
+                                                                <div className="bg-white/50 dark:bg-black/20 p-1.5 rounded border border-gray-200 dark:border-gray-700 text-center font-mono">
+                                                                    {context.referenceDate ? new Date(context.referenceDate).toLocaleDateString('pt-BR', { timeZone: 'UTC'}) : "Não Informada!"}
+                                                                </div>
+                                                            </div>
+                                                            <div>
+                                                                <span className="font-bold text-gray-900 dark:text-gray-100 block mb-1">⚖️ Status Final</span>
+                                                                <div className="text-emerald-700 dark:text-emerald-400 font-medium">✅ Aprovar: CNPJ Ativo, no prazo e com idade certa.</div>
+                                                                <div className="text-red-600 dark:text-red-400 font-medium mt-1">❌ Reprovar: CNPJ Inativo, Vencido ou Jovem demais.</div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            ) : (
+                                                <>
+                                                    <td className="py-2 px-2">
+                                                        <textarea 
+                                                            value={rule.dataToScrape || ''}
+                                                            onChange={(e) => {
+                                                                const newRules = [...context.authRules];
+                                                                newRules[idx].dataToScrape = e.target.value;
+                                                                setContext(prev => ({ ...prev, authRules: newRules }));
+                                                            }}
+                                                            disabled={user?.role === 'viewer'}
+                                                            rows={2}
+                                                            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            placeholder="Ex: Data de Abertura"
+                                                            maxLength={500}
+                                                        />
+                                                    </td>
+                                                    <td className="py-2 px-2">
+                                                        <div className="flex flex-col gap-1 items-end">
+                                                            <textarea 
+                                                                value={rule.formatRegex || ''}
+                                                                onChange={(e) => {
+                                                                    const newRules = [...context.authRules];
+                                                                    newRules[idx].formatRegex = e.target.value;
+                                                                    setContext(prev => ({ ...prev, authRules: newRules }));
+                                                                }}
+                                                                disabled={user?.role === 'viewer'}
+                                                                rows={2}
+                                                                className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
+                                                                placeholder="Ex: DD/MM/AAAA"
+                                                                maxLength={500}
+                                                            />
+                                                            {rule.formatRegex && (
+                                                                <button 
+                                                                    onClick={() => {
+                                                                        setRegexTestTarget({ regex: rule.formatRegex, index: idx });
+                                                                        setRegexTestText('');
+                                                                        setRegexTestResult({ match: null, error: null });
+                                                                        setIsRegexTestModalOpen(true);
+                                                                    }}
+                                                                    className="text-[10px] text-blue-600 dark:text-blue-400 font-medium hover:bg-blue-50 dark:hover:bg-blue-900/30 px-2 py-0.5 rounded transition-colors flex items-center"
+                                                                    title="Testar captura do Regex"
+                                                                >
+                                                                    <i className="fas fa-flask mr-1"></i> Test
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                    <td className="py-2 px-2">
+                                                        <textarea 
+                                                            value={rule.validationRule || ''}
+                                                            onChange={(e) => {
+                                                                const newRules = [...context.authRules];
+                                                                newRules[idx].validationRule = e.target.value;
+                                                                setContext(prev => ({ ...prev, authRules: newRules }));
+                                                            }}
+                                                            disabled={user?.role === 'viewer'}
+                                                            rows={2}
+                                                            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            placeholder="Ex: Data <= Edital - 2 anos"
+                                                            maxLength={1000}
+                                                        />
+                                                    </td>
+                                                    <td className="py-2 px-2">
+                                                        <textarea 
+                                                            value={rule.approvalTrigger || ''}
+                                                            onChange={(e) => {
+                                                                const newRules = [...context.authRules];
+                                                                newRules[idx].approvalTrigger = e.target.value;
+                                                                setContext(prev => ({ ...prev, authRules: newRules }));
+                                                            }}
+                                                            disabled={user?.role === 'viewer'}
+                                                            rows={2}
+                                                            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            placeholder="Ex: CNPJ > 2 anos"
+                                                            maxLength={500}
+                                                        />
+                                                    </td>
+                                                    <td className="py-2 px-2">
+                                                        <textarea 
+                                                            value={rule.rejectionTrigger || ''}
+                                                            onChange={(e) => {
+                                                                const newRules = [...context.authRules];
+                                                                newRules[idx].rejectionTrigger = e.target.value;
+                                                                setContext(prev => ({ ...prev, authRules: newRules }));
+                                                            }}
+                                                            disabled={user?.role === 'viewer'}
+                                                            rows={2}
+                                                            className="w-full p-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs resize-y disabled:opacity-50 disabled:cursor-not-allowed"
+                                                            placeholder="Ex: Reprovado: Tempo inferior a 2 anos"
+                                                            maxLength={500}
+                                                        />
+                                                    </td>
+                                                </>
+                                            )}
                                             <td className="py-2 px-2 text-center">
                                                 {user?.role !== 'viewer' && (
                                                     <button 
@@ -1875,7 +2057,7 @@ const App: React.FC = () => {
                                 </tbody>
                             </table>
                             <div className="flex gap-4 mt-4">
-                                <Tooltip text="Adiciona uma nova regra modelo para validar Cartão CNPJ e sua data de emissão" enabled={appSettings.showTooltips} position="top">
+                                <Tooltip text="Adiciona uma nova regra modelo para validar Cartão CNPJ, Situação, Emissão e Tempo de Abertura" enabled={appSettings.showTooltips} position="top">
                                     <button 
                                         onClick={() => {
                                             setContext(prev => ({
@@ -1886,9 +2068,9 @@ const App: React.FC = () => {
                                                     documentType: 'Cartão CNPJ', 
                                                     dataToScrape: 'Data de Emissão',
                                                     formatRegex: 'Emitido no dia\\\\s*(\\\\d{2}/\\\\d{2}/\\\\d{4})',
-                                                    validationRule: 'isWithinThreeMonths(value, referenceDate)',
-                                                    approvalTrigger: 'CNPJ Ativo e dentro do prazo.',
-                                                    rejectionTrigger: 'CNPJ irregular ou vencido.'
+                                                    validationRule: 'isWithinThreeMonths(value, referenceDate) && getAgeInYears(openingDate, referenceDate) >= 2',
+                                                    approvalTrigger: 'CNPJ Ativo, no prazo, e com mais de 2 anos.',
+                                                    rejectionTrigger: 'CNPJ inativo, vencido, ou tempo < 2 anos.'
                                                 }]
                                             }));
                                         }}
@@ -1960,6 +2142,17 @@ const App: React.FC = () => {
                                                 exit={{ opacity: 0, y: 10 }}
                                                 className="absolute right-0 mt-2 w-80 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 overflow-hidden"
                                             >
+                                                {context.authRules && context.authRules.length > 0 && (
+                                                    <div className="bg-indigo-50 dark:bg-indigo-900/30 p-2.5 border-b border-indigo-100 dark:border-indigo-800/50">
+                                                        <div className="flex items-start gap-2">
+                                                            <i className="fas fa-magic mt-0.5 text-indigo-500 dark:text-indigo-400 text-xs"></i>
+                                                            <div className="text-[11px] text-indigo-800 dark:text-indigo-300 leading-tight">
+                                                                <span className="font-bold block mb-0.5">Sinergia Automática:</span>
+                                                                Como você ativou <b>{context.authRules.length} módulo(s)</b> de validação prévia (ex: CNPJ), a IA será instruída a focar <b>apenas no cruzamento de dados</b> para esses documentos essenciais, evitando regras duplicadas e economizando análise.
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
                                                 <div className="p-2">
                                                     <button 
                                                         onClick={() => handleGenerateCriteria('economical')}
@@ -2139,6 +2332,7 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                                     onTriggerWithAuth={() => triggerAnalysis(candidate.slotId, true)}
                                     onCancel={() => cancelAnalysis(candidate.slotId)}
                                     onFileSelect={(e) => handleSlotFilesSelected(e, candidate.slotId)}
+                                    onRepoSelect={() => { setRepoPickerTarget(candidate.slotId); setIsRepoPickerOpen(true); }}
                                     onReset={() => setCandidates(prev => prev.map(c => c.slotId === candidate.slotId ? {...c, files: [], candidateName: "", status: 'pending', result: undefined, error: undefined} : c))}
                                     onViewReport={(report) => {
                                         const existingReport = allReports.find(r => r.id === report.id);
@@ -2359,11 +2553,87 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
               )}
           </AnimatePresence>
 
+          {/* MODAL DE TESTE DE REGEX */}
+          <AnimatePresence>
+              {isRegexTestModalOpen && (
+                  <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                      <motion.div 
+                          initial={{ opacity: 0, scale: 0.95 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.95 }}
+                          className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl border border-gray-200 dark:border-gray-700 max-w-lg w-full overflow-hidden flex flex-col max-h-[90vh]"
+                      >
+                          <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/80">
+                              <h3 className="font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                                  <i className="fas fa-flask text-blue-500"></i>
+                                  Testar Padrão de Captura (Regex)
+                              </h3>
+                              <button onClick={() => setIsRegexTestModalOpen(false)} className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                                  <i className="fas fa-times"></i>
+                              </button>
+                          </div>
+                          
+                          <div className="p-4 flex flex-col gap-4 overflow-y-auto">
+                              <div>
+                                  <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">
+                                      Regex Atual:
+                                  </label>
+                                  <div className="w-full p-2 border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-900/20 text-blue-800 dark:text-blue-300 rounded font-mono text-xs break-all">
+                                      {regexTestTarget.regex || 'Nenhum regex definido'}
+                                  </div>
+                              </div>
+                              
+                              <div>
+                                  <label className="block text-xs font-bold text-gray-600 dark:text-gray-300 mb-1">
+                                      Texto de Teste (Ex: Cole trecho do documento aqui)
+                                  </label>
+                                  <textarea
+                                      value={regexTestText}
+                                      onChange={(e) => runRegexTest(e.target.value, regexTestTarget.regex)}
+                                      className="w-full p-3 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs font-mono resize-y min-h-[120px] focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                                      placeholder="Cole aqui o texto..."
+                                  />
+                              </div>
+
+                              <div>
+                                  <label className="block text-xs font-bold justify-between flex items-end">
+                                      <span className="text-gray-600 dark:text-gray-300">Resultado da Raspagem:</span>
+                                      {regexTestResult.error ? (
+                                          <span className="text-[10px] text-red-500 font-normal">{regexTestResult.error}</span>
+                                      ) : null}
+                                  </label>
+                                  <div className={`w-full min-h-[80px] p-3 border rounded-lg text-sm font-mono mt-1 
+                                      ${regexTestResult.match ? 'border-green-300 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400' : 'border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-800 text-gray-500'}`}>
+                                      {regexTestResult.match !== null ? (
+                                          <div className="flex items-center gap-2">
+                                              <i className="fas fa-check-circle"></i>
+                                              <span>{regexTestResult.match}</span>
+                                          </div>
+                                      ) : (
+                                          <span className="italic text-xs">Nenhum dado capturado ainda.</span>
+                                      )}
+                                  </div>
+                                  <p className="text-[10px] text-gray-500 mt-2 italic leading-relaxed">
+                                      Dica: O sistema tenta extrair o que está dentro do primeiro <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">Grupo de Captura ( )</code>. Se a sua Regex não tiver parênteses ou usar <code>(?:)</code>, ele extrairá o <code className="bg-gray-100 dark:bg-gray-700 px-1 rounded">Match Completo</code>.
+                                  </p>
+                              </div>
+                          </div>
+                      </motion.div>
+                  </div>
+              )}
+          </AnimatePresence>
+
           {/* FOOTER */}
           <footer className="mt-auto py-8 border-t border-gray-100 dark:border-gray-800 text-center text-gray-400 dark:text-gray-500 text-xs transition-colors duration-200 print:hidden">
               <p>© 2024 Prosas Audit - Sistema de Auditoria Inteligente de Editais</p>
           </footer>
       </main>
+      
+      <RepositoryPickerDialog 
+        isOpen={isRepoPickerOpen} 
+        onClose={() => setIsRepoPickerOpen(false)} 
+        onSelect={handleRepoFileSelect} 
+      />
     </div>
   );
 };

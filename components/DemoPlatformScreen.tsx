@@ -281,13 +281,13 @@ export const DemoPlatformScreen: React.FC<{
                                     <tr key={proj.id} className="border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 dark:bg-gray-800/50 transition-colors">
                                         <td className="p-3 text-center"><input type="checkbox" /></td>
                                         <td className="p-3 text-center text-gray-400">
-                                            {proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus ? (
+                                            {proj.manualStatus || proj.result?.overallStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus ? (
                                                 <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] font-bold ${
-                                                    (proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'APROVADO' ? 'bg-green-100 text-green-700' :
-                                                    (proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'REPROVADO' ? 'bg-red-100 text-red-700' : 
-                                                    (proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'
+                                                    (proj.manualStatus || proj.result?.overallStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'APROVADO' ? 'bg-green-100 text-green-700' :
+                                                    (proj.manualStatus || proj.result?.overallStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'REPROVADO' ? 'bg-red-100 text-red-700' : 
+                                                    (proj.manualStatus || proj.result?.overallStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'
                                                 }`}>
-                                                    {(proj.manualStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus)}
+                                                    {(proj.manualStatus || proj.result?.overallStatus || proj.overallStatus || preloadedResults[proj.id]?.overallStatus)}
                                                 </span>
                                             ) : (
                                                 <i className="fas fa-clipboard-check text-lg"></i>
@@ -447,14 +447,14 @@ export const DemoPlatformScreen: React.FC<{
                                                 <div>
                                                     <div className="text-xs text-gray-500 dark:text-gray-400">Status</div>
                                                     <div className="font-bold text-gray-800 dark:text-gray-100">
-                                                        {selectedProjectInfo.manualStatus || selectedProjectInfo.overallStatus || (selectedProjectInfo.result || preloadedResults[selectedProjectInfo.id])?.overallStatus || '--'}
+                                                        {selectedProjectInfo.manualStatus || selectedProjectInfo.result?.overallStatus || selectedProjectInfo.overallStatus || preloadedResults[selectedProjectInfo.id]?.overallStatus || '--'}
                                                     </div>
                                                 </div>
                                                 <div className="h-8 w-px bg-gray-200 dark:bg-gray-700"></div>
                                                 <div>
                                                     <div className="text-xs text-gray-500 dark:text-gray-400">Score de Risco</div>
                                                     <div className="font-bold text-gray-800 dark:text-gray-100">
-                                                        {(selectedProjectInfo.overallStatus === 'REPROVADO' || selectedProjectInfo.overallStatus === 'APROVADO COM RESSALVAS' || (selectedProjectInfo.result || preloadedResults[selectedProjectInfo.id])?.overallStatus === 'REPROVADO' || (selectedProjectInfo.result || preloadedResults[selectedProjectInfo.id])?.overallStatus === 'APROVADO COM RESSALVAS') ? 'ALTO' : 'BAIXO'}
+                                                        {(selectedProjectInfo.manualStatus === 'REPROVADO' || selectedProjectInfo.result?.overallStatus === 'REPROVADO' || selectedProjectInfo.overallStatus === 'REPROVADO' || selectedProjectInfo.manualStatus === 'APROVADO COM RESSALVAS' || selectedProjectInfo.result?.overallStatus === 'APROVADO COM RESSALVAS' || selectedProjectInfo.overallStatus === 'APROVADO COM RESSALVAS' || preloadedResults[selectedProjectInfo.id]?.overallStatus === 'REPROVADO' || preloadedResults[selectedProjectInfo.id]?.overallStatus === 'APROVADO COM RESSALVAS') ? 'ALTO' : 'BAIXO'}
                                                     </div>
                                                 </div>
                                             </div>

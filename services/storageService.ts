@@ -111,6 +111,13 @@ export const syncUserProfile = async (): Promise<UserProfile | null> => {
         };
         console.log("Saving user profile linked to pre-existing email registration:", JSON.stringify(payload));
         await setDoc(docRef, payload);
+        
+        // Clean up any temporary pre-registration document
+        if (existingProfileByEmail && existingProfileByEmail.uid && existingProfileByEmail.uid.startsWith('pre_')) {
+           try {
+             await deleteDoc(doc(db, `users/${existingProfileByEmail.uid}`));
+           } catch(e) { console.error("Could not cleanup pre-registration", e); }
+        }
       } catch (setError) {
         handleFirestoreError(setError, OperationType.CREATE, path);
         return null;
@@ -672,14 +679,26 @@ export const adminCreateUser = async (profile: Partial<UserProfile>) => {
   if (!auth.currentUser) throw new Error("Requires authentication");
   
   try {
-    // Attempt to create user in Firebase Auth
-    const userCredential = await createUserWithEmailAndPassword(secondaryAuth, profile.email!, profile.temporaryPassword!);
-    await updateProfile(userCredential.user, { displayName: profile.name });
-    await secondaryAuth.signOut(); // Clear secondary session
+    let uid = '';
+    try {
+      // Attempt to create user in Firebase Auth
+      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, profile.email!, profile.temporaryPassword!);
+      await updateProfile(userCredential.user, { displayName: profile.name });
+      uid = userCredential.user.uid;
+    } catch (authError: any) {
+      if (authError.code === 'auth/email-already-in-use') {
+        console.warn("Usuário já tentou acessar via Google e já existe no Firebase Auth. Criando pré-cadastro diretamente no banco.");
+        uid = `pre_${Date.now()}`;
+      } else {
+        throw authError; // Repassa erro que não seja de email já em uso
+      }
+    } finally {
+      await secondaryAuth.signOut(); // Clear secondary session
+    }
     
     // Attempt to create user document in Firestore
     const newProfile = {
-      uid: userCredential.user.uid,
+      uid: uid,
       email: profile.email!,
       name: profile.name || profile.email!.split('@')[0],
       displayName: profile.name || profile.email!.split('@')[0],
@@ -692,7 +711,7 @@ export const adminCreateUser = async (profile: Partial<UserProfile>) => {
       createdAt: new Date().toISOString()
     };
     
-    await setDoc(doc(db, `users/${userCredential.user.uid}`), newProfile);
+    await setDoc(doc(db, `users/${uid}`), newProfile);
     return newProfile;
   } catch (error) {
     console.error("Error creating user admin side:", error);
@@ -836,6 +855,17 @@ export const deleteRepositoryFolder = async (folderId: string) => {
 };
 
 // --- Repository Files ---
+export const subscribeToRepositoryFilesAll = (callback: (files: RepositoryFile[]) => void) => {
+  const path = `repository_files`;
+  
+  const q = query(collection(db, path));
+  
+  return onSnapshot(q, (snapshot) => {
+    const files = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RepositoryFile));
+    callback(files);
+  });
+};
+
 export const subscribeToRepositoryFiles = (folderId: string | null, callback: (files: RepositoryFile[]) => void) => {
   const path = `repository_files`;
   
@@ -942,12 +972,39 @@ export const getFileDownloadUrl = async (file: RepositoryFile): Promise<string> 
           base64 += snap.data().data;
        }
     }
-    return `data:${file.type || 'application/octet-stream'};base64,${base64}`;
+    const dataUrl = `data:${file.type || 'application/octet-stream'};base64,${base64}`;
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return URL.createObjectURL(blob);
   } else if (file.storagePath) {
     const fileRef = ref(storage, file.storagePath);
     return await getDownloadURL(fileRef);
   }
   throw new Error("File output missing");
+};
+
+export const getRepositoryFileAsFile = async (file: RepositoryFile): Promise<File> => {
+    if (file.chunkCount) {
+        let base64 = '';
+        for (let i = 0; i < file.chunkCount; i++) {
+            const chunkPath = `repository_files/${file.id}/chunks/chunk_${i}`;
+            const snap = await getDoc(doc(db, chunkPath));
+            if (snap.exists()) {
+                base64 += snap.data().data;
+            }
+        }
+        const dataUrl = `data:${file.type || 'application/octet-stream'};base64,${base64}`;
+        const res = await fetch(dataUrl);
+        const blob = await res.blob();
+        return new File([blob], file.name, { type: file.type || 'application/octet-stream' });
+    } else if (file.storagePath) {
+        const fileRef = ref(storage, file.storagePath);
+        const url = await getDownloadURL(fileRef);
+        const res = await fetch(url);
+        const blob = await res.blob();
+        return new File([blob], file.name, { type: file.type || 'application/octet-stream' });
+    }
+    throw new Error("File output missing");
 };
 
 export const updateRepositoryFile = async (fileId: string, updates: Partial<RepositoryFile>) => {

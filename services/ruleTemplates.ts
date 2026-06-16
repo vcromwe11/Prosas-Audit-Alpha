@@ -4,28 +4,32 @@ export interface RuleTemplate {
   name: string;
   description: string;
   category: 'Cadastro' | 'Regularidade Fiscal' | 'Situação Jurídica';
+  isExperimental?: boolean;
+  experimentalWarning?: string;
   rule: Omit<DocumentAuthRule, 'id'>;
 }
 
 export const RULE_TEMPLATES: RuleTemplate[] = [
   {
     name: 'Cartão CNPJ',
-    description: 'Valida a situação cadastral ativa e data de emissão há no máximo 3 meses da data de referência.',
+    description: 'Valida situação ativa, emissão < 3 meses e tempo mínimo de abertura (padrão >= 2 anos).',
     category: 'Cadastro',
     rule: {
       questionPrefix: '1.1',
       documentType: 'Cartão CNPJ',
       dataToScrape: 'Data de Emissão',
       formatRegex: 'Emitido no dia\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isWithinThreeMonths(value, referenceDate)',
-      approvalTrigger: 'CNPJ Ativo e emitido há menos de 3 meses da data de referência.',
-      rejectionTrigger: 'CNPJ inativo ou emitido há mais de 3 meses em relação à data do edital.'
+      validationRule: 'isWithinThreeMonths(value, referenceDate) && getAgeInYears(openingDate, referenceDate) >= 2',
+      approvalTrigger: 'CNPJ Ativo, emitido há menos de 3 meses, e com tempo de abertura >= 2 anos.',
+      rejectionTrigger: 'CNPJ inativo, vencido, ou não possui tempo mínimo de 2 anos de abertura.'
     }
   },
   {
     name: 'CND Federal (União)',
     description: 'Verifica a validade da Certidão de Débitos Relativos a Créditos Tributários Federais.',
     category: 'Regularidade Fiscal',
+    isExperimental: true,
+    experimentalWarning: 'Em breve: Avaliação otimizada de CNPJ cruzado e CNDs em desenvolvimento.',
     rule: {
       questionPrefix: '1.2',
       documentType: 'CND Federal',
@@ -40,6 +44,8 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
     name: 'CRF FGTS',
     description: 'Certificado de Regularidade do FGTS, confirmando situação regular e prazo vigente.',
     category: 'Regularidade Fiscal',
+    isExperimental: true,
+    experimentalWarning: 'Em breve: Avaliação otimizada de adequação do FGTS.',
     rule: {
       questionPrefix: '1.3',
       documentType: 'CRF FGTS',
@@ -54,6 +60,8 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
     name: 'CND Trabalhista (CNDT)',
     description: 'Certidão Negativa de Débitos Trabalhistas emitida pela Justiça do Trabalho.',
     category: 'Regularidade Fiscal',
+    isExperimental: true,
+    experimentalWarning: 'Em breve: Motor visual e textual de validação da CNDT em desenvolvimento.',
     rule: {
       questionPrefix: '1.4',
       documentType: 'CNDT Trabalhista',
@@ -68,6 +76,8 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
     name: 'Falência / Recuperação Judicial',
     description: 'Certidão de Falência e Recuperação Judicial, emitida há no máximo 3 meses.',
     category: 'Situação Jurídica',
+    isExperimental: true,
+    experimentalWarning: 'Em breve: Validação estendida de varredura judiciária.',
     rule: {
       questionPrefix: '1.5',
       documentType: 'Recuperação Judicial',
@@ -82,6 +92,8 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
     name: 'CND Estadual',
     description: 'Certidão de Regularidade Fiscal com o Estado onde reside o proponente.',
     category: 'Regularidade Fiscal',
+    isExperimental: true,
+    experimentalWarning: 'Em breve: Em desenvolvimento suporte padronizado para as 27 UFs.',
     rule: {
       questionPrefix: '1.6',
       documentType: 'CND Estadual',
@@ -96,6 +108,8 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
     name: 'CND Municipal',
     description: 'Certidão de Regularidade com a prefeitura do município do proponente.',
     category: 'Regularidade Fiscal',
+    isExperimental: true,
+    experimentalWarning: 'Em breve: Em desenvolvimento suporte a prefeituras mapeadas.',
     rule: {
       questionPrefix: '1.7',
       documentType: 'CND Municipal',

@@ -1,0 +1,12 @@
+{
+  "rewrites": [
+    {
+      "source": "/api/genai/:match*",
+      "destination": "/api/genai.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

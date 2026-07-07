@@ -47,6 +47,14 @@ export interface DocumentAuthRule {
   rejectionTrigger: string;
 }
 
+export interface DocumentPromptModule {
+  id: string;
+  documentType: string;
+  description: string;
+  promptInstructions: string;
+  isActive: boolean;
+}
+
 export interface AuditContext {
   editalTitle: string;
   regulationText: string;
@@ -55,6 +63,7 @@ export interface AuditContext {
   criteriaText: string; 
   referenceDate: string; // Data do edital/prazo de inscrição
   authRules: DocumentAuthRule[];
+  promptModules?: DocumentPromptModule[];
   isReady: boolean;
 }
 
@@ -127,7 +136,7 @@ export interface UserProfile {
   name: string;
   email: string;
   avatarUrl: string;
-  role: 'admin' | 'analyst' | 'viewer';
+  role: 'admin' | 'developer' | 'analyst' | 'viewer';
   state?: string;
   company?: string;
   jobFunction?: string;
@@ -167,4 +176,5 @@ export interface AppSettings {
   autoSaveDrive: boolean;
   compactMode: boolean;
   showTooltips: boolean;
+  aiModel?: string;
 }

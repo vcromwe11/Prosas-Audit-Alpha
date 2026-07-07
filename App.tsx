@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { CandidateAnalysis, AppStage, AuditContext, UserProfile, SavedReport, Idea, IdeaComment, RepositoryFile } from './types';
+import { CandidateAnalysis, DocumentPromptModule, AppStage, AuditContext, UserProfile, SavedReport, Idea, IdeaComment, RepositoryFile } from './types';
 import { extractTextFromPdf } from './services/pdfService';
 import { extractPdfsFromZip } from './services/zipService';
 import { runDocumentAudit, generateCriteriaFromRegulation, generateAuthRulesFromRegulation, PromptGenerationMode } from './services/geminiService';
@@ -9,6 +9,7 @@ import { saveReport, subscribeToReports, saveAllReports, updateReport, subscribe
 import { PROMPTS } from './prompts';
 import { findBackupFile, uploadToDrive, downloadFromDrive } from './services/driveService';
 import { DEFAULT_DOCUMENT_CRITERIA } from './constants';
+import { fetchGlobalPromptModules, saveGlobalPromptModule, generatePromptModulesFromRegulation, FALLBACK_PROMPT_MODULE_TEMPLATES } from './services/promptModules';
 import { RULE_TEMPLATES, scanFilesForRules } from './services/ruleTemplates';
 import ReportViewer from './components/ReportViewer';
 import ProjectCard from './components/ProjectCard';
@@ -171,7 +172,8 @@ const App: React.FC = () => {
       compactMode: false,
       theme: 'classic',
       visualTheme: 'classic',
-      showTooltips: true
+      showTooltips: true,
+      aiModel: 'gemini-2.5-flash'
     };
   });
 
@@ -301,6 +303,8 @@ const App: React.FC = () => {
   // Analysis State
   const [loadingContext, setLoadingContext] = useState(false);
   const [isGeneratingCriteria, setIsGeneratingCriteria] = useState(false);
+  const [pdfTarget, setPdfTarget] = useState<'regulation' | 'form' | 'misc' | null>(null);
+  const pdfInputRef = useRef<HTMLInputElement>(null);
   const [isRepoPickerOpen, setIsRepoPickerOpen] = useState(false);
   const [repoPickerTarget, setRepoPickerTarget] = useState<string | number | null>(null);
   const [context, setContext] = useState<AuditContext>({
@@ -311,11 +315,27 @@ const App: React.FC = () => {
     criteriaText: DEFAULT_DOCUMENT_CRITERIA,
     referenceDate: '',
     authRules: [],
+    promptModules: [],
     isReady: false
   });
   
   // Alterado: Começa vazio para ser dinâmico
   const [candidates, setCandidates] = useState<CandidateAnalysis[]>([]);
+
+
+  const addNewSlot = () => {
+    
+        setCandidates(prev => [...prev, {
+        slotId: Math.random().toString(36).substring(7),
+        files: [],
+        candidateName: "",
+        status: 'pending'
+        }]);
+  };
+
+  const removeSlot = (slotId) => {
+    setCandidates(prev => prev.filter(c => c.slotId !== slotId));
+  };
 
   // --- LIFECYCLE & PERSISTENCE ---
 
@@ -371,21 +391,29 @@ const App: React.FC = () => {
             console.error("Failed to load context backup", e);
         }
     }
+
+    // Fetch global prompt modules from Firestore on startup
+    fetchGlobalPromptModules().then(mods => {
+        setGlobalPromptModules(mods);
+    }).catch(err => {
+        console.error("Failed to load global prompt modules on mount", err);
+    });
   }, []);
 
   // 2. Save context changes to localStorage
   useEffect(() => {
       // Debounce saving to avoid hitting disk on every keystroke
       const handler = setTimeout(() => {
-          if (context.regulationText || context.criteriaText !== DEFAULT_DOCUMENT_CRITERIA) {
-            localStorage.setItem(CONTEXT_STORAGE_KEY, JSON.stringify({
-                editalTitle: context.editalTitle,
-                regulationText: context.regulationText,
-                formTemplateText: context.formTemplateText,
-                miscFilesText: context.miscFilesText,
-                criteriaText: context.criteriaText
-            }));
-          }
+          localStorage.setItem(CONTEXT_STORAGE_KEY, JSON.stringify({
+              editalTitle: context.editalTitle,
+              regulationText: context.regulationText,
+              formTemplateText: context.formTemplateText,
+              miscFilesText: context.miscFilesText,
+              criteriaText: context.criteriaText,
+              referenceDate: context.referenceDate,
+              authRules: context.authRules,
+              promptModules: context.promptModules
+          }));
       }, 1000);
       return () => clearTimeout(handler);
   }, [context]);
@@ -601,14 +629,63 @@ const App: React.FC = () => {
 
   // --- ANALYSIS HANDLERS ---
 
-  const handleRepoFileSelect = async (repoFile: RepositoryFile) => {
+  const handleSlotFilesSelected = async (event: React.ChangeEvent<HTMLInputElement>, slotId: string) => {
+      const rawFiles = Array.from(event.target.files || []) as File[];
+      if (rawFiles.length === 0) return;
+
+      // Extract ZIPs if necessary
+      const processedFiles: File[] = [];
+      for (const file of rawFiles) {
+          if (file.name.endsWith('.zip')) {
+              try {
+                  const extracted = await extractPdfsFromZip(file);
+                  processedFiles.push(...extracted);
+              } catch (e: any) {
+                  alert(`Erro ao extrair ZIP ${file.name}: ${e.message}`);
+              }
+          } else {
+              processedFiles.push(file);
+          }
+      }
+
+      if (processedFiles.length === 0) {
+          alert("Nenhum arquivo PDF válido encontrado.");
+          setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, candidateName: "" } : c));
+          return;
+      }
+      
+      setCandidates(prev => prev.map(c => {
+          if (c.slotId === slotId) {
+              const baseName = rawFiles[0].name.replace(/\.(pdf|zip)$/i, '');
+              const displayName = processedFiles.length > 1 && rawFiles.length === 1 && rawFiles[0].name.endsWith('.zip') 
+                ? `${baseName} (${processedFiles.length} docs)` 
+                : baseName;
+
+              return {
+                  ...c,
+                  files: processedFiles,
+                  candidateName: displayName, 
+                  status: 'pending' 
+              };
+          }
+          return c;
+      }));
+  };
+
+  const handleRepoFileSelect = async (repoFiles: RepositoryFile[]) => {
       try {
-          const file = await getRepositoryFileAsFile(repoFile);
-          const mockEvent = { target: { files: [file] } } as any;
+          if (!repoFiles || repoFiles.length === 0) return;
+          
+          const files = await Promise.all(repoFiles.map(rf => getRepositoryFileAsFile(rf)));
+          const mockEvent = { target: { files: files } } as any;
+          
           if (typeof repoPickerTarget === 'string' && ['regulation', 'form', 'misc'].includes(repoPickerTarget)) {
               handleContextUpload(mockEvent, repoPickerTarget as 'regulation' | 'form' | 'misc');
-          } else if (typeof repoPickerTarget === 'number') {
+          } else if (typeof repoPickerTarget === 'string') {
+              // Note: slotId is now a UUID string, so we need to handle it properly
               handleSlotFilesSelected(mockEvent, repoPickerTarget);
+          } else if (typeof repoPickerTarget === 'number') {
+              handleSlotFilesSelected(mockEvent, repoPickerTarget.toString());
           }
       } catch (err) {
           console.error("Error pulling file from repo:", err);
@@ -645,6 +722,134 @@ const App: React.FC = () => {
   };
 
   const [isGeneratingAuthRules, setIsGeneratingAuthRules] = useState(false);
+  const [isDetectingModules, setIsDetectingModules] = useState(false);
+  const [globalPromptModules, setGlobalPromptModules] = useState<Omit<DocumentPromptModule, 'id'>[]>(FALLBACK_PROMPT_MODULE_TEMPLATES);
+  const [expandedModuleId, setExpandedModuleId] = useState<string | null>(null);
+  const [savingModuleIds, setSavingModuleIds] = useState<Record<string, 'saving' | 'saved' | null>>({});
+  const [isSavingAllModules, setIsSavingAllModules] = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  const getModuleSyncStatus = (mod: DocumentPromptModule) => {
+      const matched = globalPromptModules.find(g => g.documentType.trim().toLowerCase() === mod.documentType.trim().toLowerCase());
+      if (!matched) return 'new'; // New module (not in defaults)
+      
+      const isDifferent = 
+          matched.promptInstructions?.trim() !== mod.promptInstructions?.trim() ||
+          matched.description?.trim() !== mod.description?.trim() ||
+          matched.isActive !== mod.isActive;
+          
+      return isDifferent ? 'modified' : 'synced';
+  };
+
+  const handleSaveSingleModule = async (mod: DocumentPromptModule) => {
+      setSavingModuleIds(prev => ({ ...prev, [mod.id]: 'saving' }));
+      try {
+          await saveGlobalPromptModule(mod, user?.email || 'admin');
+          setSavingModuleIds(prev => ({ ...prev, [mod.id]: 'saved' }));
+          
+          // Refresh global templates
+          const updated = await fetchGlobalPromptModules();
+          setGlobalPromptModules(updated);
+          
+          setTimeout(() => {
+              setSavingModuleIds(prev => ({ ...prev, [mod.id]: null }));
+          }, 3000); // Reset saved status after 3 seconds
+      } catch (e) {
+          console.error(e);
+          alert('Erro ao salvar módulo');
+          setSavingModuleIds(prev => ({ ...prev, [mod.id]: null }));
+      }
+  };
+
+  const handleSaveAllModules = async () => {
+      if (!context.promptModules || context.promptModules.length === 0) return;
+      setIsSavingAllModules('saving');
+      try {
+          for (const mod of context.promptModules) {
+              await saveGlobalPromptModule(mod, user?.email || 'admin');
+          }
+          // Refresh global templates
+          const updated = await fetchGlobalPromptModules();
+          setGlobalPromptModules(updated);
+          setIsSavingAllModules('saved');
+          setTimeout(() => {
+              setIsSavingAllModules('idle');
+          }, 3000);
+      } catch (e) {
+          console.error(e);
+          alert('Erro ao salvar alguns módulos.');
+          setIsSavingAllModules('idle');
+      }
+  };
+  const handleModuleDrop = (e: React.DragEvent, dropIdx: number) => {
+      e.preventDefault();
+      if (draggedModuleIdx === null || draggedModuleIdx === dropIdx) return;
+      
+      let newMods = [...(context.promptModules || [])];
+      
+      // If we're dragging a fixed module, don't allow it
+      const draggedDocType = newMods[draggedModuleIdx].documentType.trim().toLowerCase();
+      if (draggedDocType === 'orquestrador da esteira' || draggedDocType === 'cartão cnpj') {
+          setDraggedModuleIdx(null);
+          return;
+      }
+      
+      const dropDocType = newMods[dropIdx].documentType.trim().toLowerCase();
+      // even if dropped on a fixed module, enforceModuleOrder will fix it, 
+      // but we shouldn't allow reordering them, enforce will push them back to top, 
+      // which is fine, but visually it's just better to do the splice and let enforce fix the rest.
+      
+      const draggedMod = newMods.splice(draggedModuleIdx, 1)[0];
+      newMods.splice(dropIdx, 0, draggedMod);
+      
+      setContext({...context, promptModules: enforceModuleOrder(newMods)});
+      setDraggedModuleIdx(null);
+  };
+
+  const [draggedModuleIdx, setDraggedModuleIdx] = useState<number | null>(null);
+  const [draggableModuleId, setDraggableModuleId] = useState<string | null>(null);
+  const enforceModuleOrder = (modules: DocumentPromptModule[]) => {
+      const orqIdx = modules.findIndex(m => m.documentType.trim().toLowerCase() === 'orquestrador da esteira');
+      let orqModule = null;
+      if (orqIdx !== -1) {
+          orqModule = modules.splice(orqIdx, 1)[0];
+      }
+
+      const cnpjIdx = modules.findIndex(m => m.documentType.trim().toLowerCase() === 'cartão cnpj');
+      let cnpjModule = null;
+      if (cnpjIdx !== -1) {
+          cnpjModule = modules.splice(cnpjIdx, 1)[0];
+      }
+
+      const result = [...modules];
+      if (cnpjModule) result.unshift(cnpjModule);
+      if (orqModule) result.unshift(orqModule);
+      return result;
+  };
+
+  const moveModule = (idx: number, direction: 'up' | 'down') => {
+      let newMods = [...(context.promptModules || [])];
+      
+      const docType = newMods[idx].documentType.trim().toLowerCase();
+      if (docType === 'orquestrador da esteira' || docType === 'cartão cnpj') return;
+      
+      if (direction === 'up' && idx > 0) {
+          const prevDocType = newMods[idx - 1].documentType.trim().toLowerCase();
+          if (prevDocType === 'orquestrador da esteira' || prevDocType === 'cartão cnpj') return;
+          const temp = newMods[idx - 1];
+          newMods[idx - 1] = newMods[idx];
+          newMods[idx] = temp;
+      } else if (direction === 'down' && idx < newMods.length - 1) {
+          const nextDocType = newMods[idx + 1].documentType.trim().toLowerCase();
+          if (nextDocType === 'orquestrador da esteira' || nextDocType === 'cartão cnpj') return;
+          const temp = newMods[idx + 1];
+          newMods[idx + 1] = newMods[idx];
+          newMods[idx] = temp;
+      }
+      
+      newMods = enforceModuleOrder(newMods);
+      setContext({...context, promptModules: enforceModuleOrder(newMods)});
+  };
+
   const [isRegexTestModalOpen, setIsRegexTestModalOpen] = useState(false);
   const [regexTestTarget, setRegexTestTarget] = useState({ regex: '', index: -1 });
   const [regexTestText, setRegexTestText] = useState('');
@@ -677,111 +882,78 @@ const App: React.FC = () => {
     }
   };
 
+  
+  const handleDetectModules = async () => {
+      if (!context.regulationText) return;
+      setIsDetectingModules(true);
+      try {
+          const result = await generatePromptModulesFromRegulation(context.regulationText, globalPromptModules);
+          
+          if (result.updatedModules && result.updatedModules.length > 0) {
+              // Add IDs to the updated modules
+              const newModsWithIds = result.updatedModules.map(m => ({
+                  ...m,
+                  id: Math.random().toString(36).substring(7)
+              }));
+              
+              setContext(prev => ({
+                  ...prev, 
+                  promptModules: enforceModuleOrder(newModsWithIds), 
+                  referenceDate: result.referenceDate || prev.referenceDate
+              }));
+          }
+      } catch (error) {
+          console.error("Error auto-detecting modules:", error);
+          alert("Ocorreu um erro ao detectar os módulos. Tente novamente.");
+      } finally {
+          setIsDetectingModules(false);
+      }
+  }
+
   const handleGenerateAuthRules = async () => {
       if (!context.regulationText) return;
       setIsGeneratingAuthRules(true);
-      await logAuditAction('GERAR_REGRAS_AUTENTICACAO_EDITAL', { referenceDate: context.referenceDate });
       try {
-          const result = await generateAuthRulesFromRegulation(context.regulationText, context.formTemplateText, context.referenceDate);
-          setContext(prev => ({ 
-              ...prev, 
-              authRules: result.rules,
-              referenceDate: result.referenceDate || prev.referenceDate
-          }));
+          const result = await generateAuthRulesFromRegulation(
+              context.regulationText,
+              context.formTemplateText || "",
+              context.referenceDate || ""
+          );
+          if (result && result.rules && result.rules.length > 0) {
+              setContext(prev => ({
+                  ...prev,
+                  authRules: result.rules,
+                  referenceDate: result.referenceDate || prev.referenceDate
+              }));
+          }
       } catch (error) {
           console.error("Error generating auth rules:", error);
-          alert("Erro ao gerar regras de autenticação. Verifique o console.");
+          alert("Ocorreu um erro ao gerar regras de qualificação institucional. Tente novamente.");
       } finally {
           setIsGeneratingAuthRules(false);
       }
   };
 
-  const handleGenerateCriteria = async (mode: PromptGenerationMode) => {
-      if (!context.regulationText) return;
+  const handleGenerateCriteria = async (mode: 'standard' | 'economical' | 'specialized') => {
+      if (!context.regulationText) {
+          alert("Por favor, envie o regulamento primeiro.");
+          return;
+      }
       setIsGeneratingCriteria(true);
-      setIsPromptMenuOpen(false);
-      await logAuditAction('GERAR_CRITERIOS_EDITAL', { mode });
       try {
-          const newCriteria = await generateCriteriaFromRegulation(context.regulationText, mode, context.authRules || []);
-          if (newCriteria) {
-              setContext(prev => ({ ...prev, criteriaText: newCriteria }));
+          const criteria = await generateCriteriaFromRegulation(context.regulationText, mode);
+          if (criteria) {
+              setContext(prev => ({
+                  ...prev,
+                  criteriaText: criteria
+              }));
           }
       } catch (error) {
-          alert("Erro ao gerar critérios. Tente novamente.");
+          console.error("Error generating criteria:", error);
+          alert("Ocorreu um erro ao gerar critérios. Tente novamente.");
       } finally {
           setIsGeneratingCriteria(false);
       }
-  };
-
-  // 1. Adicionar novo slot vazio
-  const addNewSlot = () => {
-      if (candidates.length >= appSettings.maxConcurrentSlots) {
-          alert(`Para garantir a estabilidade e economia de tokens, limitamos a ${appSettings.maxConcurrentSlots} análises simultâneas.`);
-          return;
-      }
-
-      setCandidates(prev => [...prev, {
-          slotId: Date.now(), // ID único temp
-          id: Date.now().toString(),
-          candidateName: "",
-          files: [],
-          rawText: "",
-          status: 'pending' // Começa como pendente, aguardando arquivos
-      }]);
-  };
-
-  // 2. Remover slot
-  const removeSlot = (slotId: number) => {
-      setCandidates(prev => prev.filter(c => c.slotId !== slotId));
-  };
-
-  // 3. Upload de arquivos (Suporta PDF e ZIP)
-  const handleSlotFilesSelected = async (e: React.ChangeEvent<HTMLInputElement>, slotId: number) => {
-      if (!e.target.files || e.target.files.length === 0) return;
-      
-      const rawFiles = Array.from(e.target.files) as File[];
-      const processedFiles: File[] = [];
-      let isLoadingZip = false;
-
-      // Estado de carregamento visual simples (opcional, pode ser melhorado)
-      setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, candidateName: "Processando arquivos..." } : c));
-
-      for (const file of rawFiles) {
-          if (file.name.toLowerCase().endsWith('.zip')) {
-              isLoadingZip = true;
-              try {
-                  const extracted = await extractPdfsFromZip(file);
-                  processedFiles.push(...extracted);
-              } catch (err) {
-                  alert(`Erro ao abrir ZIP ${file.name}: ` + err);
-              }
-          } else if (file.type === 'application/pdf') {
-              processedFiles.push(file);
-          }
-      }
-
-      if (processedFiles.length === 0) {
-          alert("Nenhum arquivo PDF válido encontrado.");
-          setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, candidateName: "" } : c));
-          return;
-      }
-      
-      setCandidates(prev => prev.map(c => {
-          if (c.slotId === slotId) {
-              const baseName = rawFiles[0].name.replace(/\.(pdf|zip)$/i, '');
-              const displayName = processedFiles.length > 1 && rawFiles.length === 1 && rawFiles[0].name.endsWith('.zip') 
-                ? `${baseName} (${processedFiles.length} docs)` 
-                : baseName;
-
-              return {
-                  ...c,
-                  files: processedFiles,
-                  candidateName: displayName, 
-                  status: 'pending' 
-              };
-          }
-          return c;
-      }));
   };
 
   const abortControllersRef = useRef<Record<number, AbortController>>({});
@@ -820,8 +992,8 @@ const App: React.FC = () => {
         let deterministicAuthPassed = true;
         let filesForAi = [...candidate.files];
 
-        // 1. Run Deterministic Auth if requested
-        if (withAuth && (context.authRules || []).length > 0) {
+        // 1. Run Deterministic Auth se NÃO estiver na IA Otimizada
+        if (withAuth && (context.authRules || []).length > 0 && analysisMode !== 'IA_OTIMIZADA') {
             const { runDeterministicAuth } = await import('./services/authEvaluator');
             const authResult = await runDeterministicAuth(candidate.files, context.authRules || [], context.referenceDate, (msg) => {
                 // Update specific slot progress to show the analyst what is being validated
@@ -861,7 +1033,7 @@ const App: React.FC = () => {
             }
             
             setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
-        } else if (analysisMode === 'IA_OTIMIZADA' && !deterministicAuthPassed) {
+        } else if (analysisMode !== 'IA_OTIMIZADA' && !deterministicAuthPassed) {
             // Short-circuit: Reprovado (Inabilitação Documental) without calling AI
             result = {
                 summary: authReport + "\n\n--- ANÁLISE INTERROMPIDA ---\n\nO candidato falhou nas triagens obrigatórias, sendo reprovado por Inabilitação Documental sem a necessidade de prosseguir com a fase de IA Completa.",
@@ -880,7 +1052,21 @@ const App: React.FC = () => {
             setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'AI_PROMPT' } : c));
             
             let criteriaForAi = context.criteriaText;
-            if (authReport) {
+
+            // Se for IA OTIMIZADA, anexa os módulos de prompt ativos!
+            if (analysisMode === 'IA_OTIMIZADA') {
+                const activeModules = (context.promptModules || []).filter(m => m.isActive);
+                if (activeModules.length > 0) {
+                    const modulesPrompt = activeModules.map(m => `--- ${m.documentType} ---\n${m.promptInstructions}`).join("\n\n");
+                    criteriaForAi += "\n\n=== INSTRUÇÕES ESPECÍFICAS DE DOCUMENTOS (IA OTIMIZADA) ===\n";
+                    criteriaForAi += "⚠️ REGRAS OBRIGATÓRIAS PARA TODOS OS DOCUMENTOS:\n";
+                    criteriaForAi += "1. CNPJ OBRIGATÓRIO: É IMPERATIVO que em TODOS os documentos analisados (sem exceção), os dados do CNPJ ou da Razão Social sejam correspondentes/iguais. Isso é para garantir que os documentos pertençam à mesma organização.\n";
+                    criteriaForAi += "2. TRIAGEM DOS ARQUIVOS: O seu primeiro movimento nesta análise DEVE SER localizar entre os documentos enviados quais são aqueles exigidos pelos módulos abaixo.\n";
+                    criteriaForAi += "   - DESCARTE imediatamente qualquer documento enviado que NÃO seja exigido pelos módulos (ex: se enviaram foto de projeto mas não há módulo pedindo isso, descarte).\n";
+                    criteriaForAi += "   - No início do seu relatório final, você DEVE listar os arquivos enviados e sinalizar visualmente se foram utilizados ou descartados (ex: '✅ [Nome do Arquivo] - Utilizado', '❌ [Nome do Arquivo] - Descartado'). Arquivos descartados NÃO devem entrar na análise subsequente, e você NÃO DEVE gerar pontos de checagem (points) no JSON para eles. Eles devem ser sumariamente ignorados do banco de dados final.\n\n";
+                    criteriaForAi += "Analise APENAS os documentos exigidos nos módulos a seguir utilizando as respectivas instruções:\n\n" + modulesPrompt;
+                }
+            } else if (authReport) {
                 const optimizedInstruction = analysisMode === 'IA_OTIMIZADA' 
                     ? "1. Os documentos descritos no relatório acima JÁ FORAM APROVADOS e não foram anexados agora para poupar processamento. NÃO cobre a existência ou validade deles novamente.\n2."
                     : "1. Os documentos descritos no relatório acima JÁ FORAM AVALIADOS. Você os recebeu nos anexos, mas pode confiar no status de aprovação do laudo local.\n2.";
@@ -909,7 +1095,9 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                     setCandidates(prev => prev.map(c => 
                         c.slotId === slotId ? { ...c, partialStream: streamedText } : c
                     ));
-                }
+                },
+                isOtimizada ? context.promptModules?.filter(m => m.isActive) : undefined,
+                isOtimizada
             );
             
             result = aiData.result;
@@ -990,6 +1178,15 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex print:block font-sans text-slate-800 dark:text-slate-200 transition-colors duration-200">
+      <input 
+        type="file" 
+        className="hidden" 
+        ref={pdfInputRef} 
+        accept=".pdf,.doc,.docx,.txt" 
+        onChange={(e) => {
+            if (pdfTarget) handleContextUpload(e, pdfTarget as any);
+        }} 
+      />
       
       {/* SIDEBAR - Adicionado print:hidden */}
       <aside className={`bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 flex-shrink-0 flex flex-col h-screen sticky top-0 print:hidden transition-all duration-300 ${isSidebarCollapsed ? 'w-20' : 'w-64'}`}>
@@ -1417,31 +1614,28 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Regulamento (PDF)</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Obrigatório. Contém as regras do edital.</p>
                                 <div className="flex gap-2">
-                                  <Tooltip text="Faça o upload do arquivo PDF ou DOCX contendo o regulamento principal do edital" enabled={appSettings.showTooltips} position="top">
-                                    <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                        context.regulationText ? 'bg-white dark:bg-gray-800 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:border-prosas-blue dark:hover:border-prosas-blue'
+                                    <button onClick={() => { setPdfTarget('regulation'); pdfInputRef.current?.click(); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                        context.regulationText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-900/40 border border-transparent'
                                     }`}>
-                                        <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'regulation')} />
-                                        {context.regulationText ? 'Local' : 'Upload Local'}
-                                    </label>
-                                  </Tooltip>
-                                  <button onClick={() => { setRepoPickerTarget('regulation'); setIsRepoPickerOpen(true); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                      context.regulationText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
-                                  }`}>
-                                      Repositório
-                                  </button>
+                                        Upload Local
+                                    </button>
+                                    <button onClick={() => { setRepoPickerTarget('regulation'); setIsRepoPickerOpen(true); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                        context.regulationText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/20 dark:hover:bg-green-900/40 border border-transparent'
+                                    }`}>
+                                        Repositório
+                                    </button>
                                 </div>
                              </div>
 
-                             {/* Form Template Card */}
+                            {/* Form Template Card */}
                              <div className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center transition-colors relative min-h-[200px] ${
                                  context.formTemplateText 
-                                 ? colorsStyle.accentCardSelectedBg 
-                                 : `border-gray-300 dark:border-gray-600 ${colorsStyle.accentHoverBorder} hover:bg-gray-50 dark:hover:bg-gray-700/50`
+                                  ? 'border-prosas-blue bg-blue-50 dark:bg-blue-900/10'
+                                  : 'border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:bg-gray-50 dark:hover:bg-gray-700/50'
                              }`}>
                                 {context.formTemplateText && (
                                     <div className="absolute top-3 right-3 flex items-center gap-2">
-                                        <div className={`bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm ${colorsStyle.accentText}`}><i className="fas fa-check-circle"></i></div>
+                                        <div className="text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
                                         <button 
                                             onClick={() => setContext({...context, formTemplateText: ''})} 
                                             className="text-gray-400 hover:text-red-500 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm transition-colors"
@@ -1451,18 +1645,15 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                                         </button>
                                     </div>
                                 )}
-                                <i className={`fas fa-file-alt text-4xl mb-4 ${context.formTemplateText ? colorsStyle.accentText : 'text-gray-300 dark:text-gray-600'}`}></i>
+                                <i className={`fas fa-file-invoice text-4xl mb-4 ${context.formTemplateText ? 'text-blue-500' : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Modelo de Formulário</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Estrutura da proposta.</p>
                                 <div className="flex gap-2">
-                                  <Tooltip text="Opcional. Adicione o modelo visual de formulário do edital se desejar." enabled={appSettings.showTooltips} position="top">
-                                    <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                        context.formTemplateText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
-                                    }`}>
-                                        <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'form')} />
-                                        {context.formTemplateText ? 'Local' : 'Upload Local'}
-                                    </label>
-                                  </Tooltip>
+                                  <button onClick={() => { setPdfTarget('form'); pdfInputRef.current?.click(); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.formTemplateText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
+                                  }`}>
+                                      Upload Local
+                                  </button>
                                   <button onClick={() => { setRepoPickerTarget('form'); setIsRepoPickerOpen(true); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
                                       context.formTemplateText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
                                   }`}>
@@ -1471,15 +1662,15 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                                 </div>
                              </div>
 
-                             {/* Misc Files Card */}
+                            {/* Misc Files Card */}
                              <div className={`border-2 border-dashed rounded-lg p-6 flex flex-col items-center justify-center text-center transition-colors relative min-h-[200px] ${
                                  context.miscFilesText 
-                                 ? colorsStyle.accentCardSelectedBg 
-                                 : `border-gray-300 dark:border-gray-600 ${colorsStyle.accentHoverBorder} hover:bg-gray-50 dark:hover:bg-gray-700/50`
+                                  ? 'border-prosas-blue bg-blue-50 dark:bg-blue-900/10'
+                                  : 'border-gray-300 dark:border-gray-600 hover:border-prosas-blue dark:hover:border-prosas-blue hover:bg-gray-50 dark:hover:bg-gray-700/50'
                              }`}>
                                 {context.miscFilesText && (
                                     <div className="absolute top-3 right-3 flex items-center gap-2">
-                                        <div className={`bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm ${colorsStyle.accentText}`}><i className="fas fa-check-circle"></i></div>
+                                        <div className="text-blue-600 dark:text-blue-400 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm"><i className="fas fa-check-circle"></i></div>
                                         <button 
                                             onClick={() => setContext({...context, miscFilesText: ''})} 
                                             className="text-gray-400 hover:text-red-500 bg-white dark:bg-gray-800 rounded-full p-1 shadow-sm transition-colors"
@@ -1489,18 +1680,15 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                                         </button>
                                     </div>
                                 )}
-                                <i className={`fas fa-paperclip text-4xl mb-4 ${context.miscFilesText ? colorsStyle.accentText : 'text-gray-300 dark:text-gray-600'}`}></i>
+                                <i className={`fas fa-paperclip text-4xl mb-4 ${context.miscFilesText ? 'text-blue-500' : 'text-gray-300 dark:text-gray-600'}`}></i>
                                 <h3 className="font-bold text-gray-700 dark:text-gray-200 text-sm mb-1">Outros Anexos</h3>
                                 <p className="text-xs text-gray-400 dark:text-gray-500 mb-4">Opcional. Manuais ou erratas.</p>
                                 <div className="flex gap-2">
-                                  <Tooltip text="Opcional. Inclua erratas, guias, manuais adicionais ou anexos extras relevantes." enabled={appSettings.showTooltips} position="top">
-                                    <label className={`cursor-pointer px-4 py-2 rounded text-xs font-bold transition-colors ${
-                                        context.miscFilesText ? `bg-white dark:bg-gray-800 ${colorsStyle.accentCardSelectedText} border ${colorsStyle.accentCardSelectedBg.split(' ')[0]}` : `bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 ${colorsStyle.accentHoverBorder}`
-                                    }`}>
-                                        <input type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" className="hidden" onChange={(e) => handleContextUpload(e, 'misc')} />
-                                        {context.miscFilesText ? 'Local' : 'Upload Local'}
-                                    </label>
-                                  </Tooltip>
+                                  <button onClick={() => { setPdfTarget('misc'); pdfInputRef.current?.click(); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
+                                      context.miscFilesText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
+                                  }`}>
+                                      Upload Local
+                                  </button>
                                   <button onClick={() => { setRepoPickerTarget('misc'); setIsRepoPickerOpen(true); }} className={`px-4 py-2 rounded text-xs font-bold transition-colors ${
                                       context.miscFilesText ? 'bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-400' : 'bg-blue-50 dark:bg-blue-900/20 text-prosas-blue hover:bg-blue-100 dark:hover:bg-blue-900/40 border border-transparent'
                                   }`}>
@@ -1511,8 +1699,241 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                         </div>
                    </div>
 
-                   {/* SECTION 2: AUTH RULES */}
-                   {isOtimizada && (
+                   {/* SECTION 2: AUTH RULES OR PROMPT MODULES */}
+                   {isOtimizada ? (
+                       <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8 transition-colors duration-200">
+                           <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-100 dark:border-gray-700">
+                               <div className="flex items-center gap-3">
+                                   <div className="p-2 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 rounded-lg">
+                                       <i className="fas fa-cubes text-xl"></i>
+                                   </div>
+                                   <div>
+                                       <div className="flex items-center">
+                                           <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">2. Módulos Específicos por Documento</h2>
+                                           <Tooltip text="Defina regras específicas para cada tipo de documento. A IA fará a triagem dos arquivos enviados pelos candidatos. Documentos que não se encaixarem em nenhum módulo serão DESCARTADOS e ignorados na análise, economizando processamento e evitando falsos positivos." enabled={appSettings.showTooltips} position="top">
+                                               <i className="fas fa-info-circle text-gray-400 hover:text-emerald-500 cursor-help ml-2"></i>
+                                           </Tooltip>
+                                       </div>
+                                       <p className="text-sm text-gray-500 dark:text-gray-400">Configure as instruções para cada documento exigido. Documentos não mapeados aqui serão descartados pela IA.</p>
+                                   </div>
+                               </div>
+                               <div className="flex items-center gap-4">
+                                <div className="flex flex-col items-end mr-4">
+                                    <label className="text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Data de Referência (Edital):</label>
+                                    <input 
+                                        type="date" 
+                                        value={context.referenceDate}
+                                        onChange={(e) => setContext({...context, referenceDate: e.target.value})}
+                                        className="p-1 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-800 dark:text-gray-100 text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    {context.regulationText && (
+                                        <button
+                                            onClick={handleDetectModules}
+                                            disabled={isDetectingModules}
+                                            className="text-xs bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/40 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                                        >
+                                            {isDetectingModules ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-robot"></i>} 
+                                            Detectar pelo Regulamento
+                                        </button>
+                                    )}
+                                   <button
+                                       onClick={() => {
+                                           const existingTypes = (context.promptModules || []).map(m => m.documentType);
+                                           const toAdd = globalPromptModules.filter(t => !existingTypes.includes(t.documentType)).map(t => ({...t, id: Math.random().toString(36).substring(7)}));
+                                           if(toAdd.length === 0) { alert('Todos os módulos padrões já foram incluídos!'); return; }
+                                           setContext(prev => ({...prev, promptModules: enforceModuleOrder([...(prev.promptModules || []), ...toAdd])}));
+                                       }}
+                                       className="text-xs text-gray-500 hover:text-emerald-600 dark:text-gray-400 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-gray-800 px-3 py-1.5 rounded font-bold flex items-center gap-1.5 transition-colors"
+                                   >
+                                       <i className="fas fa-plus"></i> Todos Padrão
+                                   </button>
+                                   {context.promptModules && context.promptModules.length > 0 && (user?.role === 'admin' || user?.role === 'developer') && (
+                                       <button
+                                           onClick={handleSaveAllModules}
+                                           disabled={isSavingAllModules === 'saving'}
+                                           className={`text-xs px-3 py-1.5 rounded font-bold flex items-center gap-1.5 transition-all duration-200 ${
+                                               isSavingAllModules === 'saving'
+                                                   ? 'bg-blue-50 text-blue-500 animate-pulse border border-blue-200'
+                                                   : isSavingAllModules === 'saved'
+                                                   ? 'bg-emerald-100 text-emerald-700 border border-emerald-300 dark:bg-emerald-900/40 dark:text-emerald-300'
+                                                   : 'bg-blue-50 hover:bg-blue-100 text-blue-600 border border-blue-200/50 hover:border-blue-300 dark:bg-blue-950/30 dark:hover:bg-blue-950/50 dark:text-blue-400'
+                                           }`}
+                                           title="Salvar todos os módulos atuais como padrão no banco de dados"
+                                       >
+                                           {isSavingAllModules === 'saving' ? (
+                                               <i className="fas fa-spinner fa-spin"></i>
+                                           ) : isSavingAllModules === 'saved' ? (
+                                               <i className="fas fa-check-double text-emerald-600 dark:text-emerald-400"></i>
+                                           ) : (
+                                               <i className="fas fa-cloud-upload-alt"></i>
+                                           )}
+                                           {isSavingAllModules === 'saving' ? 'Salvando...' : isSavingAllModules === 'saved' ? 'Todos Salvos!' : 'Salvar Todos como Padrão'}
+                                       </button>
+                                   )}
+                               </div>
+                           </div>
+                           </div>
+                           <motion.div layout className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                               {(context.promptModules || []).map((mod, idx) => {
+    const isExpanded = expandedModuleId === mod.id;
+    const isCollapsed = expandedModuleId && !isExpanded;
+    
+    return (
+        <motion.div 
+            layout 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            key={mod.id} 
+            draggable={draggableModuleId === mod.id && mod.documentType.trim().toLowerCase() !== 'orquestrador da esteira' && mod.documentType.trim().toLowerCase() !== 'cartão cnpj'}
+            onDragStart={() => setDraggedModuleIdx(idx)}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => handleModuleDrop(e, idx)}
+            className={
+                isCollapsed 
+                ? `cursor-pointer p-3 col-span-1 rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 hover:bg-gray-100 dark:hover:bg-gray-800 flex justify-between items-center text-sm transition-colors ${draggedModuleIdx === idx ? 'opacity-50' : ''}`
+                : `p-4 rounded-lg border overflow-hidden ${isExpanded ? 'md:col-span-2' : 'col-span-1'} ${mod.isActive ? 'border-emerald-400 bg-emerald-50 dark:bg-emerald-950/20' : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50'} ${draggedModuleIdx === idx ? 'opacity-50 scale-[0.98]' : ''}`
+            }
+            onClick={isCollapsed ? () => setExpandedModuleId(mod.id) : undefined}
+        >
+            {isCollapsed ? (
+                <>
+                    <div className="flex items-center gap-2" onMouseEnter={() => setDraggableModuleId(mod.id)} onMouseLeave={() => setDraggableModuleId(null)}>
+                        <i className="fas fa-grip-vertical text-gray-400 hover:text-emerald-500 cursor-grab active:cursor-grabbing px-2 py-1"></i>
+                        <span className="font-bold text-gray-700 dark:text-gray-300 truncate"><i className="fas fa-file-alt mr-2 text-emerald-500"></i>{mod.documentType || 'Módulo sem nome'}</span>
+                    </div>
+                    <span className="text-xs px-2 py-1 bg-gray-200 dark:bg-gray-700 rounded text-gray-500 shrink-0"><i className="fas fa-expand-alt mr-1"></i> Maximizar</span>
+                </>
+            ) : (
+                <motion.div
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.3, delay: 0.1 }}
+                >
+                    <div className="flex justify-between items-start mb-2">
+                        <div className="flex flex-col gap-1 mr-3 mt-1 justify-center items-center text-gray-400" onMouseEnter={() => setDraggableModuleId(mod.id)} onMouseLeave={() => setDraggableModuleId(null)}>
+                            <i className="fas fa-grip-vertical mb-1 cursor-grab active:cursor-grabbing hover:text-emerald-500"></i>
+                            <button onClick={() => moveModule(idx, 'up')} disabled={idx === 0} className="hover:text-emerald-500 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"><i className="fas fa-chevron-up"></i></button>
+                            <button onClick={() => moveModule(idx, 'down')} disabled={idx === (context.promptModules || []).length - 1} className="hover:text-emerald-500 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"><i className="fas fa-chevron-down"></i></button>
+                        </div>
+                        <div className="flex-1">
+                            <input 
+                                type="text" 
+                                value={mod.documentType}
+                                onChange={e => {
+                                    const newMods = [...(context.promptModules || [])];
+                                    newMods[idx].documentType = e.target.value;
+                                    setContext({...context, promptModules: enforceModuleOrder(newMods)});
+                                }}
+                                className="font-bold text-sm bg-transparent border-b border-dashed border-gray-300 focus:border-emerald-500 outline-none w-full text-gray-800 dark:text-gray-200"
+                                placeholder="Tipo do Documento"
+                            />
+                            <input 
+                                type="text" 
+                                value={mod.description}
+                                onChange={e => {
+                                    const newMods = [...(context.promptModules || [])];
+                                    newMods[idx].description = e.target.value;
+                                    setContext({...context, promptModules: enforceModuleOrder(newMods)});
+                                }}
+                                className="text-xs bg-transparent border-b border-dashed border-gray-300 focus:border-emerald-500 outline-none w-full text-gray-500 dark:text-gray-400 mt-1"
+                                placeholder="Breve descrição"
+                            />
+                        </div>
+                        <div className="flex items-center gap-2 ml-4">
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" className="sr-only peer" checked={mod.isActive} onChange={e => {
+                                    const newMods = [...(context.promptModules || [])];
+                                    newMods[idx].isActive = e.target.checked;
+                                    setContext({...context, promptModules: enforceModuleOrder(newMods)});
+                                }}/>
+                                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-gray-600 peer-checked:bg-emerald-500"></div>
+                            </label>
+                            {(user?.role === 'admin' || user?.role === 'developer') && (
+                                <button 
+                                    onClick={() => handleSaveSingleModule(mod)}
+                                    disabled={savingModuleIds[mod.id] === 'saving'}
+                                    className={`text-xs p-1.5 rounded-md transition-all duration-200 flex items-center gap-1 ${
+                                        savingModuleIds[mod.id] === 'saving'
+                                            ? 'bg-blue-50 text-blue-500 animate-pulse'
+                                            : savingModuleIds[mod.id] === 'saved'
+                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 scale-105'
+                                            : getModuleSyncStatus(mod) === 'synced'
+                                            ? 'text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                                            : 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-900/20 dark:text-blue-400 dark:hover:bg-blue-900/40 font-semibold ring-1 ring-blue-300/50'
+                                    }`}
+                                    title={
+                                        savingModuleIds[mod.id] === 'saving'
+                                            ? 'Salvando...'
+                                            : savingModuleIds[mod.id] === 'saved'
+                                            ? 'Salvo no banco!'
+                                            : getModuleSyncStatus(mod) === 'synced'
+                                            ? 'Módulo sincronizado com o Padrão'
+                                            : 'Salvar alterações como Módulo Padrão'
+                                    }
+                                >
+                                    {savingModuleIds[mod.id] === 'saving' ? (
+                                        <i className="fas fa-spinner fa-spin"></i>
+                                    ) : savingModuleIds[mod.id] === 'saved' ? (
+                                        <i className="fas fa-check-double text-emerald-600 dark:text-emerald-400"></i>
+                                    ) : getModuleSyncStatus(mod) === 'synced' ? (
+                                        <i className="fas fa-check"></i>
+                                    ) : (
+                                        <i className="fas fa-save"></i>
+                                    )}
+                                    {savingModuleIds[mod.id] === 'saved' && <span className="text-[10px] font-bold">Salvo!</span>}
+                                    {getModuleSyncStatus(mod) !== 'synced' && !savingModuleIds[mod.id] && <span className="text-[10px] font-bold">Salvar</span>}
+                                </button>
+                            )}
+                            <button onClick={() => {
+                                const newMods = [...(context.promptModules || [])];
+                                newMods.splice(idx, 1);
+                                setContext({...context, promptModules: enforceModuleOrder(newMods)});
+                            }} className="text-red-500 hover:bg-red-50 p-1 rounded">
+                                <i className="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <textarea 
+                        value={mod.promptInstructions}
+                        onChange={e => {
+                            const newMods = [...(context.promptModules || [])];
+                            newMods[idx].promptInstructions = e.target.value;
+                            setContext({...context, promptModules: enforceModuleOrder(newMods)});
+                        }}
+                        className={`w-full text-xs p-2 bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded mt-2 outline-none focus:ring-1 focus:ring-emerald-500 text-gray-700 dark:text-gray-300 transition-all duration-300 ${isExpanded ? 'h-[32rem]' : 'h-24'}`}
+                        placeholder="Instruções para a IA analisar este documento..."
+                    />
+                    <div className="mt-2 flex justify-end">
+                        <button 
+                            onClick={() => setExpandedModuleId(isExpanded ? null : mod.id)}
+                            className="text-xs text-gray-500 hover:text-emerald-600 flex items-center gap-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-3 py-1 rounded shadow-sm transition-colors"
+                        >
+                            <i className={`fas ${isExpanded ? 'fa-compress-alt' : 'fa-expand-alt'}`}></i> {isExpanded ? 'Minimizar' : 'Expandir para Editar'}
+                        </button>
+                    </div>
+                </motion.div>
+            )}
+        </motion.div>
+    );
+})}
+                               <button onClick={() => {
+                                   setContext(prev => ({...prev, promptModules: enforceModuleOrder([...(prev.promptModules || []), {id: Math.random().toString(36).substring(7), documentType: 'Novo Documento', description: '', promptInstructions: '', isActive: true}])}));
+                               }} className="flex flex-col items-center justify-center p-4 rounded-lg border border-dashed border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/30 text-gray-500 hover:text-emerald-500 hover:border-emerald-400 transition-colors min-h-[150px]">
+                                   <i className="fas fa-plus mb-2 text-xl"></i>
+                                   <span className="text-sm font-semibold">Novo Módulo</span>
+                               </button>
+                           </motion.div>
+                       </div>
+                   ) : null}
+                    {/* (OLD AUTH RULES HIDDEN FOR NOW) */}
+                    {false && (
+                    <>
+{/* SECTION 2: AUTH RULES */}
+                   
                        <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8 transition-colors duration-200">
                         <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-100 dark:border-gray-700">
                             <div className="flex items-center gap-3">
@@ -2104,9 +2525,10 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                             </div>
                         </div>
                    </div>
+                   </>
                    )}
 
-                   {/* SECTION 3: PROMPT CRITERIA */}
+{/* SECTION 3: PROMPT CRITERIA */}
                    <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 mb-8 transition-colors duration-200">
                         <div className="flex items-center justify-between mb-6 pb-4 border-b border-gray-100 dark:border-gray-700">
                             <div className="flex items-center gap-3">
@@ -2114,8 +2536,11 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                                     <i className="fas fa-magic text-xl"></i>
                                 </div>
                                 <div>
-                                    <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">{isOtimizada ? "3. Critérios da IA (Prompt)" : "2. Critérios da IA (Prompt)"}</h2>
-                                    <p className="text-sm text-gray-500 dark:text-gray-400">Edite as regras lógicas que a IA usará para aprovar ou reprovar.</p>
+                                    <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">{isOtimizada ? "3. Instruções Globais Complementares" : "2. Critérios da IA (Prompt)"}</h2>
+                                    <Tooltip text={isOtimizada ? "Opcional. Instruções gerais que se aplicam a toda a análise, não a um documento específico. Como você está usando a IA Otimizada, o foco deve estar nos módulos acima." : "Edite as regras lógicas gerais que a IA usará para analisar todos os documentos."} enabled={appSettings.showTooltips} position="top">
+                                        <i className="fas fa-info-circle text-gray-400 hover:text-emerald-500 cursor-help ml-2"></i>
+                                    </Tooltip>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400">{isOtimizada ? "Regras gerais aplicadas a todo o processo (opcional)." : "Edite as regras lógicas que a IA usará para aprovar ou reprovar."}</p>
                                 </div>
                             </div>
                             {context.regulationText && (
@@ -2199,6 +2624,14 @@ ${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: 
                         </div>
                         
                         <div className="relative">
+                            {isOtimizada && (
+                                <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800/50 flex items-start gap-3">
+                                    <i className="fas fa-lightbulb text-blue-500 mt-1"></i>
+                                    <div className="text-sm text-blue-800 dark:text-blue-300">
+                                        <strong>Dica de Fluxo de Trabalho:</strong> Na IA Otimizada, a maior parte das regras deve ficar nos <strong>Módulos Específicos</strong> acima. A IA fará uma triagem dos arquivos recebidos e <strong>descartará</strong> automaticamente qualquer arquivo que não corresponda a um dos módulos definidos. Use este campo apenas para orientações globais (ex: "Sempre formate datas como DD/MM/AAAA").
+                                    </div>
+                                </div>
+                            )}
                             <textarea 
                                 className={`w-full h-96 p-6 text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 ${colorsStyle.accentFocusRing} focus:bg-white dark:focus:bg-gray-800 outline-none resize-y leading-relaxed shadow-inner transition-colors duration-200`}
                                 value={context.criteriaText}
@@ -2326,7 +2759,7 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
                                     project={candidate} 
                                     index={index} 
                                     criteriaText={context.criteriaText} // PASSED HERE
-                                    hasAuthRules={(context.authRules || []).length > 0}
+                                    hasAuthRules={isOtimizada ? (context.promptModules || []).some(m => m.isActive) : (context.authRules || []).length > 0}
                                     onDelete={() => removeSlot(candidate.slotId)}
                                     onTrigger={() => triggerAnalysis(candidate.slotId, false)}
                                     onTriggerWithAuth={() => triggerAnalysis(candidate.slotId, true)}

@@ -11,17 +11,20 @@ async function startServer() {
   app.use('/api/genai', createProxyMiddleware({
     target: 'https://generativelanguage.googleapis.com',
     changeOrigin: true,
-    pathRewrite: {
-      '^/api/genai': '', // remove base path
+    pathRewrite: (path, req) => {
+      // Remove base path and the key=proxy query parameter
+      let newPath = path.replace('^/api/genai', '').replace('/api/genai', '');
+      newPath = newPath.replace(/([?&])key=[^&]+(&|$)/, (match, p1, p2) => {
+          return p1 === '?' && p2 === '' ? '' : (p1 === '?' ? '?' : (p2 === '' ? '' : '&'));
+      });
+      return newPath;
     },
     on: {
       proxyReq: (proxyReq) => {
         // Add the API key securely
-        const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
-        if (apiKey) {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
           proxyReq.setHeader('x-goog-api-key', apiKey);
-        } else {
-          console.warn("WARNING: No API key found in server environment variables!");
         }
       }
     }

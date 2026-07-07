@@ -181,7 +181,7 @@ body.theme-warm .bg-emerald-100 {
   color: #b45309 !important;
 }
 html.dark body.theme-warm .bg-blue-900\/10,
-html.dark body.theme-warm .bg-[#1a2333]\/30,
+html.dark body.theme-warm .bg-\[\#1a2333\]\/30,
 html.dark body.theme-warm .bg-emerald-950\/20,
 html.dark body.theme-warm .bg-blue-100,
 html.dark body.theme-warm .bg-emerald-100 {
@@ -317,7 +317,7 @@ body.theme-cool .bg-emerald-100 {
   color: #0891b2 !important;
 }
 html.dark body.theme-cool .bg-blue-900\/10,
-html.dark body.theme-cool .bg-[#1a2333]\/30,
+html.dark body.theme-cool .bg-\[\#1a2333\]\/30,
 html.dark body.theme-cool .bg-emerald-950\/20,
 html.dark body.theme-cool .bg-blue-100,
 html.dark body.theme-cool .bg-emerald-100 {
@@ -453,7 +453,7 @@ body.theme-mono .bg-emerald-100 {
   color: #000000 !important;
 }
 html.dark body.theme-mono .bg-blue-900\/10,
-html.dark body.theme-mono .bg-[#1a2333]\/30,
+html.dark body.theme-mono .bg-\[\#1a2333\]\/30,
 html.dark body.theme-mono .bg-emerald-950\/20,
 html.dark body.theme-mono .bg-blue-100,
 html.dark body.theme-mono .bg-emerald-100 {

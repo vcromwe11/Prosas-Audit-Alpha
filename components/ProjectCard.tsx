@@ -143,9 +143,9 @@ const ProjectCard: React.FC<Props> = ({
                                     <button 
                                         onClick={onTriggerWithAuth}
                                         className="w-full bg-prosas-blue hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow-sm hover:shadow-md transform hover:-translate-y-0.5 transition-all duration-200 active:scale-95 flex items-center justify-center gap-2"
-                                        title="Faz uma validação inicial de documentos institucionais antes de ler o projeto"
+                                        title="Usa os módulos configurados para análise"
                                     >
-                                        <i className="fas fa-shield-alt"></i> Análise com Autenticação
+                                        <i className="fas fa-bolt"></i> Análise Otimizada/Validada
                                     </button>
                                 )}
                             </div>

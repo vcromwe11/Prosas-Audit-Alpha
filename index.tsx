@@ -6,6 +6,7 @@ import { ErrorBoundary } from './src/components/ErrorBoundary';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { UIProvider } from './src/contexts/UIContext';
 import { AnalysisProvider } from './src/contexts/AnalysisContext';
+import { Analytics } from "@vercel/analytics/react";
 
 const rootElement = document.getElementById('root');
 if (!rootElement) {
@@ -20,6 +21,7 @@ root.render(
         <UIProvider>
           <AnalysisProvider>
             <App />
+            <Analytics />
           </AnalysisProvider>
         </UIProvider>
       </AuthProvider>

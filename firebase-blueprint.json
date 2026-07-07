@@ -5,141 +5,327 @@
       "description": "User profile data",
       "type": "object",
       "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string" },
-        "displayName": { "type": "string" },
-        "role": { "type": "string", "enum": ["admin", "analyst", "viewer"] },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "uid": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "analyst",
+            "viewer"
+          ]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
       },
-      "required": ["uid", "email", "role"]
+      "required": [
+        "uid",
+        "email",
+        "role"
+      ]
     },
     "Report": {
       "title": "Report",
       "description": "A saved audit report for a candidate",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "editalName": { "type": "string" },
-        "candidateName": { "type": "string" },
-        "cnpj": { "type": "string" },
-        "timestamp": { "type": "number" },
-        "result": { "type": "string", "description": "JSON stringified AuditResult" },
-        "manualStatus": { "type": "string", "description": "Manual evaluation status" },
-        "userNotes": { "type": "string", "description": "Manual evaluation notes" }
+        "id": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "editalName": {
+          "type": "string"
+        },
+        "candidateName": {
+          "type": "string"
+        },
+        "cnpj": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "result": {
+          "type": "string",
+          "description": "JSON stringified AuditResult"
+        },
+        "manualStatus": {
+          "type": "string",
+          "description": "Manual evaluation status"
+        },
+        "userNotes": {
+          "type": "string",
+          "description": "Manual evaluation notes"
+        }
       },
-      "required": ["id", "userId", "editalName", "candidateName", "timestamp", "result"]
+      "required": [
+        "id",
+        "userId",
+        "editalName",
+        "candidateName",
+        "timestamp",
+        "result"
+      ]
     },
     "Idea": {
       "title": "Idea",
       "description": "A shared idea or note for app development",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "userName": { "type": "string" },
-        "title": { "type": "string" },
-        "description": { "type": "string" },
-        "timestamp": { "type": "number" }
+        "id": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        }
       },
-      "required": ["id", "userId", "userName", "title", "description", "timestamp"]
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "title",
+        "description",
+        "timestamp"
+      ]
     },
     "IdeaComment": {
       "title": "IdeaComment",
       "description": "A comment on a shared idea",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "userName": { "type": "string" },
-        "text": { "type": "string" },
-        "timestamp": { "type": "number" }
+        "id": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "userName": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        }
       },
-      "required": ["id", "userId", "userName", "text", "timestamp"]
+      "required": [
+        "id",
+        "userId",
+        "userName",
+        "text",
+        "timestamp"
+      ]
     },
     "Prompt": {
       "title": "Prompt",
       "description": "A saved prompt used for analysis",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "userId": { "type": "string" },
-        "text": { "type": "string" },
-        "timestamp": { "type": "number" }
+        "id": {
+          "type": "string"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        }
       },
-      "required": ["id", "userId", "text", "timestamp"]
+      "required": [
+        "id",
+        "userId",
+        "text",
+        "timestamp"
+      ]
     },
     "GlobalPrompt": {
       "title": "GlobalPrompt",
       "description": "A globally stored master prompt",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "key": { "type": "string" },
-        "text": { "type": "string" },
-        "updatedBy": { "type": "string" },
-        "timestamp": { "type": "number" }
+        "id": {
+          "type": "string"
+        },
+        "key": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "updatedBy": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        }
       },
-      "required": ["id", "key", "text", "updatedBy", "timestamp"]
+      "required": [
+        "id",
+        "key",
+        "text",
+        "updatedBy",
+        "timestamp"
+      ]
     },
     "ReportDetail": {
       "title": "ReportDetail",
       "description": "Dense details of a saved report",
       "type": "object",
       "properties": {
-        "result": { "type": "string", "description": "JSON stringified AuditResult" }
+        "result": {
+          "type": "string",
+          "description": "JSON stringified AuditResult"
+        }
       },
-      "required": ["result"]
+      "required": [
+        "result"
+      ]
     },
     "AuditLog": {
       "title": "AuditLog",
       "description": "An entry logging a user's action for auditing purposes",
       "type": "object",
       "properties": {
-        "action": { "type": "string" },
-        "timestamp": { "type": "number" },
-        "userId": { "type": "string" },
-        "userEmail": { "type": "string" }
+        "action": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        },
+        "userId": {
+          "type": "string"
+        },
+        "userEmail": {
+          "type": "string"
+        }
       },
-      "required": ["action", "timestamp", "userId", "userEmail"]
+      "required": [
+        "action",
+        "timestamp",
+        "userId",
+        "userEmail"
+      ]
+    },
+    "PromptModule": {
+      "title": "PromptModule",
+      "description": "Standard prompt modules (e.g. for IA Otimizada)",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "documentType": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "promptInstructions": {
+          "type": "string"
+        },
+        "updatedBy": {
+          "type": "string"
+        },
+        "timestamp": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "documentType",
+        "description",
+        "promptInstructions",
+        "timestamp"
+      ]
     }
   },
   "firestore": {
     "users/{userId}": {
-      "schema": { "$ref": "#/entities/User" },
+      "schema": {
+        "$ref": "#/entities/User"
+      },
       "description": "User profiles"
     },
     "users/{userId}/reports/{reportId}": {
-      "schema": { "$ref": "#/entities/Report" },
+      "schema": {
+        "$ref": "#/entities/Report"
+      },
       "description": "Audit reports saved by the user"
     },
     "users/{userId}/prompts/{promptId}": {
-      "schema": { "$ref": "#/entities/Prompt" },
+      "schema": {
+        "$ref": "#/entities/Prompt"
+      },
       "description": "Prompts saved by the user"
     },
     "ideas/{ideaId}": {
-      "schema": { "$ref": "#/entities/Idea" },
+      "schema": {
+        "$ref": "#/entities/Idea"
+      },
       "description": "Shared ideas and notes"
     },
     "ideas/{ideaId}/comments/{commentId}": {
-      "schema": { "$ref": "#/entities/IdeaComment" },
+      "schema": {
+        "$ref": "#/entities/IdeaComment"
+      },
       "description": "Comments on a shared idea"
     },
     "global_prompts/{promptId}": {
-      "schema": { "$ref": "#/entities/GlobalPrompt" },
+      "schema": {
+        "$ref": "#/entities/GlobalPrompt"
+      },
       "description": "Global master prompts"
     },
     "reports/{reportId}": {
-      "schema": { "$ref": "#/entities/Report" },
+      "schema": {
+        "$ref": "#/entities/Report"
+      },
       "description": "Audit reports shared globally"
     },
     "reports/{reportId}/details/{detailId}": {
-      "schema": { "$ref": "#/entities/ReportDetail" },
+      "schema": {
+        "$ref": "#/entities/ReportDetail"
+      },
       "description": "Full detailed findings of an audit report"
     },
     "audit_logs/{logId}": {
-      "schema": { "$ref": "#/entities/AuditLog" },
+      "schema": {
+        "$ref": "#/entities/AuditLog"
+      },
       "description": "Auditable log entries"
+    },
+    "prompt_modules/{moduleId}": {
+      "schema": {
+        "$ref": "#/entities/PromptModule"
+      },
+      "description": "Standard prompt modules"
     }
   }
 }

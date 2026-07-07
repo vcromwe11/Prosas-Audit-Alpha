@@ -9,7 +9,7 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
     function isAdmin() {
-      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role in ['admin', 'developer'];
     }
     function isValidString(text, min, max) {
       return text is string && text.size() >= min && text.size() <= max;
@@ -21,7 +21,7 @@ service cloud.firestore {
       
       function isValidUser(data) {
         return data.keys().hasAll(['uid', 'email', 'name', 'avatarUrl', 'role'])
-          && data.keys().hasOnly(['uid', 'email', 'name', 'avatarUrl', 'displayName', 'role', 'createdAt', 'state', 'company', 'jobFunction', 'temporaryPassword'])
+          && data.keys().hasOnly(['uid', 'email', 'name', 'avatarUrl', 'displayName', 'role', 'createdAt', 'state', 'company', 'jobFunction', 'temporaryPassword', 'isPreRegistration'])
           && data.uid == userId
           && isValidString(data.email, 0, 150)
           && isValidString(data.name, 0, 150)
@@ -32,7 +32,8 @@ service cloud.firestore {
           && (!('state' in data) || isValidString(data.state, 0, 150))
           && (!('company' in data) || isValidString(data.company, 0, 150))
           && (!('jobFunction' in data) || isValidString(data.jobFunction, 0, 150))
-          && (!('temporaryPassword' in data) || isValidString(data.temporaryPassword, 0, 150));
+          && (!('temporaryPassword' in data) || isValidString(data.temporaryPassword, 0, 150))
+          && (!('isPreRegistration' in data) || data.isPreRegistration is bool);
       }
       
       allow create: if ((isOwner(userId) && request.resource.data.role == 'viewer') || isAdmin()) && isValidUser(request.resource.data);
@@ -52,6 +53,11 @@ service cloud.firestore {
         allow update: if false; // Prompts are immutable
         allow delete: if isOwner(userId);
       }
+    }
+
+    // Archive Users collection
+    match /archived_users/{userId} {
+      allow read, write: if isAdmin();
     }
 
     // Reports collection (Shared across all users)
@@ -110,6 +116,27 @@ service cloud.firestore {
     }
 
     // Global Prompts collection
+    
+    // Prompt Modules collection
+    match /prompt_modules/{moduleId} {
+      allow read: if isAuthenticated();
+
+      function isValidPromptModule(data) {
+        return data.keys().hasAll(['id', 'documentType', 'description', 'promptInstructions', 'timestamp'])
+          && data.keys().hasOnly(['id', 'documentType', 'description', 'promptInstructions', 'timestamp', 'updatedBy'])
+          && isValidString(data.id, 1, 100)
+          && isValidString(data.documentType, 1, 200)
+          && isValidString(data.description, 0, 1000)
+          && isValidString(data.promptInstructions, 0, 10000)
+          && data.timestamp is number
+          && (!('updatedBy' in data) || isValidString(data.updatedBy, 0, 150));
+      }
+
+      allow create: if isAdmin() && isValidPromptModule(request.resource.data);
+      allow update: if isAdmin() && isValidPromptModule(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
     match /global_prompts/{promptId} {
       allow read: if isAuthenticated();
 
@@ -147,6 +174,10 @@ service cloud.firestore {
       match /chunks/{chunkId} {
         allow read, write: if request.auth != null;
       }
+    }
+    // AI Audits Cache
+    match /ai_audits_cache/{cacheId} {
+      allow read, write: if request.auth != null;
     }
   }
 }

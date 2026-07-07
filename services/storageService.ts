@@ -88,8 +88,13 @@ export const syncUserProfile = async (): Promise<UserProfile | null> => {
       }
 
       if (!existingProfileByEmail) {
-        await auth.signOut();
-        throw new Error("Usuário não cadastrado. Entre em contato com um administrador para obter acesso.");
+        // Allow any user to sign up via Google
+        existingProfileByEmail = {
+          role: 'viewer',
+          company: '',
+          state: '',
+          jobFunction: ''
+        };
       }
 
       const newUserProfile: UserProfile = {
@@ -112,11 +117,11 @@ export const syncUserProfile = async (): Promise<UserProfile | null> => {
         console.log("Saving user profile linked to pre-existing email registration:", JSON.stringify(payload));
         await setDoc(docRef, payload);
         
-        // Clean up any temporary pre-registration document
-        if (existingProfileByEmail && existingProfileByEmail.uid && existingProfileByEmail.uid.startsWith('pre_')) {
+        // Clean up any old document with the same email to prevent duplicates
+        if (existingProfileByEmail && existingProfileByEmail.uid && existingProfileByEmail.uid !== user.uid) {
            try {
              await deleteDoc(doc(db, `users/${existingProfileByEmail.uid}`));
-           } catch(e) { console.error("Could not cleanup pre-registration", e); }
+           } catch(e) { console.error("Could not cleanup old registration", e); }
         }
       } catch (setError) {
         handleFirestoreError(setError, OperationType.CREATE, path);
@@ -257,16 +262,6 @@ export const updateGlobalPrompt = async (key: string, text: string) => {
 };
 
 export const getGlobalPrompt = async (key: string, defaultText: string): Promise<string> => {
-  const path = `global_prompts/${key}`;
-  try {
-    const docRef = doc(db, path);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return docSnap.data().text;
-    }
-  } catch (error) {
-    console.error("Failed to fetch global prompt", error);
-  }
   return defaultText;
 };
 
@@ -680,39 +675,59 @@ export const adminCreateUser = async (profile: Partial<UserProfile>) => {
   
   try {
     let uid = '';
-    try {
+    let isUpdatingExisting = false;
+    
+    // Check if user already exists in Firestore by email
+    const usersQuery = query(collection(db, "users"), where("email", "==", profile.email));
+    const snapshot = await getDocs(usersQuery);
+    
+    if (!snapshot.empty) {
+      uid = snapshot.docs[0].id;
+      isUpdatingExisting = true;
+      console.log("User already exists in DB. Will update existing profile.");
+    } else {
       // Attempt to create user in Firebase Auth
-      const userCredential = await createUserWithEmailAndPassword(secondaryAuth, profile.email!, profile.temporaryPassword!);
-      await updateProfile(userCredential.user, { displayName: profile.name });
-      uid = userCredential.user.uid;
-    } catch (authError: any) {
-      if (authError.code === 'auth/email-already-in-use') {
-        console.warn("Usuário já tentou acessar via Google e já existe no Firebase Auth. Criando pré-cadastro diretamente no banco.");
-        uid = `pre_${Date.now()}`;
-      } else {
-        throw authError; // Repassa erro que não seja de email já em uso
+      try {
+        const userCredential = await createUserWithEmailAndPassword(secondaryAuth, profile.email!, profile.temporaryPassword!);
+        await updateProfile(userCredential.user, { displayName: profile.name });
+        uid = userCredential.user.uid;
+      } catch (authError: any) {
+        if (authError.code === 'auth/email-already-in-use') {
+          console.warn("Usuário já tentou acessar via Google e já existe no Firebase Auth. Criando pré-cadastro diretamente no banco.");
+          uid = `pre_${Date.now()}`;
+        } else {
+          throw authError; // Repassa erro que não seja de email já em uso
+        }
+      } finally {
+        await secondaryAuth.signOut(); // Clear secondary session
       }
-    } finally {
-      await secondaryAuth.signOut(); // Clear secondary session
     }
     
-    // Attempt to create user document in Firestore
-    const newProfile = {
-      uid: uid,
+    const newProfile: any = {
       email: profile.email!,
       name: profile.name || profile.email!.split('@')[0],
       displayName: profile.name || profile.email!.split('@')[0],
-      avatarUrl: `https://ui-avatars.com/api/?name=${profile.name}&background=C13B2E&color=fff&size=128`,
       role: profile.role || 'viewer',
       state: profile.state || '',
       company: profile.company || '',
       jobFunction: profile.jobFunction || '',
-      temporaryPassword: profile.temporaryPassword, // Visible only for admins as requested
-      createdAt: new Date().toISOString()
+      temporaryPassword: profile.temporaryPassword
     };
+
+    if (!isUpdatingExisting) {
+      newProfile.uid = uid;
+      newProfile.avatarUrl = `https://ui-avatars.com/api/?name=${profile.name}&background=C13B2E&color=fff&size=128`;
+      newProfile.createdAt = new Date().toISOString();
+      newProfile.isPreRegistration = uid.startsWith('pre_');
+    }
     
-    await setDoc(doc(db, `users/${uid}`), newProfile);
-    return newProfile;
+    await setDoc(doc(db, `users/${uid}`), newProfile, { merge: true });
+    
+    // We add this for the frontend to show alert if needed
+    newProfile.isPreRegistration = !isUpdatingExisting && uid.startsWith('pre_');
+    newProfile.isUpdatingExisting = isUpdatingExisting;
+    
+    return { ...newProfile, uid };
   } catch (error) {
     console.error("Error creating user admin side:", error);
     throw error;
@@ -723,7 +738,16 @@ export const deleteUserProfile = async (uid: string) => {
   if (!auth.currentUser) throw new Error("Requires authentication");
   const path = `users/${uid}`;
   try {
-    await deleteDoc(doc(db, path));
+    const docRef = doc(db, path);
+    // Move to archived_users for history
+    const userDoc = await getDoc(docRef);
+    if (userDoc.exists()) {
+      await setDoc(doc(db, `archived_users/${uid}_${Date.now()}`), {
+        ...userDoc.data(),
+        archivedAt: new Date().toISOString()
+      });
+    }
+    await deleteDoc(docRef);
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, path);
     throw error;

@@ -85,7 +85,7 @@ const UserManagementScreen: React.FC = () => {
 
         setIsCreating(true);
         try {
-            await adminCreateUser({
+            const newProf = await adminCreateUser({
                 name: newUserName,
                 email: newUserEmail,
                 temporaryPassword: newUserTempPass,
@@ -104,6 +104,13 @@ const UserManagementScreen: React.FC = () => {
             setNewUserCompany('');
             setNewUserFunction('');
             setNewUserRole('viewer');
+
+            if ((newProf as any).isUpdatingExisting) {
+                alert(`Aviso: O e-mail ${newUserEmail} já estava cadastrado no banco de dados. O perfil existente foi atualizado em vez de criar um novo.`);
+            } else if ((newProf as any).isPreRegistration) {
+                alert(`O usuário foi cadastrado, mas o e-mail ${newUserEmail} já possuía uma conta (provavelmente via Google). A senha anterior foi mantida.`);
+            }
+
         } catch (error: any) {
             console.error("User creation error:", error);
             setCreateError(`Erro ao criar usuário: ${error.message || 'O e-mail pode já estar em uso ou a senha é muito fraca.'}`);

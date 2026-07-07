@@ -91,7 +91,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               throw new Error("A criação de novas contas na tela de login está desativada por motivos de segurança.");
           }
       } catch (error: any) {
-          setAuthError(error.message || "Erro na autenticação.");
+          console.error("Auth error:", error);
+          if (error.code === 'auth/invalid-credential') {
+              setAuthError('E-mail ou senha incorretos. Se este perfil foi criado a partir de um login pré-existente via Google, não há senha definida. Clique no botão "Continuar com Google" abaixo.');
+          } else if (error.code === 'auth/unauthorized-domain') {
+              setAuthError('Domínio não autorizado. Adicione o domínio do Vercel na aba de Domínios Autorizados do Firebase Console (Authentication -> Settings).');
+          } else {
+              setAuthError(error.message || "Erro na autenticação.");
+          }
       }
   };
 

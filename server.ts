@@ -8,12 +8,11 @@ async function startServer() {
   const PORT = 3000;
 
   // The `@google/genai` sdk sends a POST request with the body
-  app.use('/api/genai', createProxyMiddleware({
+  app.use(['/v1beta', '/v1alpha'], createProxyMiddleware({
     target: 'https://generativelanguage.googleapis.com',
     changeOrigin: true,
     pathRewrite: (path, req) => {
-      // Remove base path and the key=proxy query parameter
-      let newPath = path.replace('^/api/genai', '').replace('/api/genai', '');
+      let newPath = req.originalUrl;
       newPath = newPath.replace(/([?&])key=[^&]+(&|$)/, (match, p1, p2) => {
           return p1 === '?' && p2 === '' ? '' : (p1 === '?' ? '?' : (p2 === '' ? '' : '&'));
       });
@@ -26,6 +25,13 @@ async function startServer() {
         if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
           proxyReq.setHeader('x-goog-api-key', apiKey);
         }
+        console.log("Proxying request to:", proxyReq.path);
+      },
+      proxyRes: (proxyRes, req, res) => {
+        console.log("Proxy response status:", proxyRes.statusCode);
+      },
+      error: (err, req, res) => {
+        console.error("Proxy error:", err);
       }
     }
   }));

@@ -1,8 +1,8 @@
 import { useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { AppStage } from '../../types';
+import { AppStage } from '../types';
 import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../firebase';
+import { db } from '../firebase';
 
 export interface UseAuthGuardOptions {
   stage?: AppStage;

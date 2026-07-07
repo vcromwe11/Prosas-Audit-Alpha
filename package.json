@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@google/genai": "^1.33.0",
+    "@opendocsg/pdf2md": "^0.2.7",
     "@vercel/analytics": "^2.0.1",
     "express": "^5.2.1",
     "firebase": "^12.11.0",
@@ -22,6 +23,7 @@
     "mammoth": "^1.12.0",
     "motion": "^12.38.0",
     "pdfjs-dist": "5.4.449",
+    "pdfkit": "^0.19.1",
     "react": "^19.2.2",
     "react-dom": "^19.2.2"
   },

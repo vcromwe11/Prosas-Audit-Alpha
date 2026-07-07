@@ -175,6 +175,12 @@ service cloud.firestore {
         allow read, write: if request.auth != null;
       }
     }
+    // Edital Settings Cache
+    match /edital_settings/{editalId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+
     // AI Audits Cache
     match /ai_audits_cache/{cacheId} {
       allow read, write: if true;

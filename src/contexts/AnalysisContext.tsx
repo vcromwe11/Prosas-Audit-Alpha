@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useRef } from 'react';
-import { AuditContext, CandidateAnalysis, SavedReport, AppStage } from '../../types';
+import { AuditContext, CandidateAnalysis, SavedReport, AppStage } from '../types';
 
 export const DEFAULT_DOCUMENT_CRITERIA = `
 1. IDENTIFICAÇÃO DO PROJETO E DO PROPONENTE:

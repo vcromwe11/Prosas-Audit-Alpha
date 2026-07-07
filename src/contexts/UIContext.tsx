@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { AppSettings, Idea } from '../../types';
+import { AppSettings, Idea } from '../types';
 
 interface UIContextType {
   isDarkMode: boolean;

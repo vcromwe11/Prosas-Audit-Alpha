@@ -11,7 +11,38 @@ const getAiModel = () => {
             }
         }
     } catch (e) {}
-    return 'gemini-2.5-flash'; // Fallback
+    return 'gemini-3.5-flash'; // Fallback
+};
+
+export const callGeminiWithRetry = async (
+    ai: GoogleGenAI,
+    options: {
+        model: string;
+        contents: any;
+        config?: any;
+    },
+    retries = 5,
+    baseDelay = 10000
+): Promise<any> => {
+    for (let i = 0; i < retries; i++) {
+        try {
+            return await ai.models.generateContent(options);
+        } catch (error: any) {
+            const errorMessage = error.message || JSON.stringify(error);
+            const status = error.status || error.response?.status;
+            const isRateLimit = errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("429") || status === 429;
+            const isServerOverload = status === 503 || errorMessage.includes("503");
+            
+            if ((isRateLimit || isServerOverload) && i < retries - 1) {
+                const waitTime = baseDelay * Math.pow(1.5, i) + Math.random() * 2000;
+                console.warn(`Gemini API rate limit or overload (${status || '429'}). Retrying in ${(waitTime/1000).toFixed(1)}s... (Tentativa ${i + 1}/${retries})`);
+                await new Promise(resolve => setTimeout(resolve, waitTime));
+                continue;
+            }
+            throw error;
+        }
+    }
+    throw new Error("Falha na API Gemini após múltiplas tentativas.");
 };
 
 import { DEFAULT_DOCUMENT_CRITERIA } from "../constants";
@@ -55,7 +86,7 @@ ${formTemplateText.substring(0, 15000)}
 `;
 
     try {
-        const response = await ai.models.generateContent({
+        const response = await callGeminiWithRetry(ai, {
             model,
             contents: prompt,
             config: {
@@ -131,7 +162,7 @@ Gere os critérios de análise com base APENAS no regulamento acima.
 `;
 
     try {
-        const response = await ai.models.generateContent({
+        const response = await callGeminiWithRetry(ai, {
             model: model,
             contents: prompt,
         });
@@ -213,13 +244,13 @@ export const runDocumentAudit = async (
     
     if (isOtimizada && promptModules && promptModules.length > 0) {
         // Triage Step
-        onProgress?.('TRIAGEM: Identificando documentos com Gemini 1.5 Flash...');
+        onProgress?.('TRIAGEM: Identificando documentos com Gemini 3.5 Flash...');
         
         const triageClient = new GoogleGenAI({
             apiKey: "proxy",
             httpOptions: { baseUrl: window.location.origin + "/api/genai" }
         });
-        const triageModel = 'gemini-1.5-flash';
+        const triageModel = 'gemini-3.5-flash';
         
         const activeModulesList = promptModules.map(m => `- ${m.documentType}: ${m.description}`).join("\n");
         const candidateDocumentsList = candidateFiles.map(f => `- ${f.name}`).join("\n");
@@ -235,7 +266,7 @@ export const runDocumentAudit = async (
         
         let documentMapping: any = {};
         try {
-            const triageResponse = await triageClient.models.generateContent({
+            const triageResponse = await callGeminiWithRetry(triageClient, {
                 model: triageModel,
                 contents: triageParts,
                 config: {
@@ -279,7 +310,7 @@ export const runDocumentAudit = async (
             }
             
             try {
-                const response = await ai.models.generateContent({
+                const response = await callGeminiWithRetry(ai, {
                     model: model,
                     contents: moduleParts,
                     config: { responseMimeType: 'application/json', temperature: 0.1 }
@@ -316,7 +347,7 @@ REGRAS DE STATUS GERAL:
 Retorne EXCLUSIVAMENTE um JSON neste formato:
 { "candidateName": "Nome", "organizationData": { ... }, "overallStatus": "APROVADO" | "REPROVADO" | "RESSALVAS", "summary": "Resumo...", "points": [ ... pontos ] }`;
 
-        const orchestrationResponse = await ai.models.generateContent({
+        const orchestrationResponse = await callGeminiWithRetry(ai, {
             model: model,
             contents: [{ text: orchestrationPrompt }],
             config: { responseMimeType: 'application/json', temperature: 0.1 }

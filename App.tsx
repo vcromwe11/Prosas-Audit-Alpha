@@ -173,7 +173,7 @@ const App: React.FC = () => {
       theme: 'classic',
       visualTheme: 'classic',
       showTooltips: true,
-      aiModel: 'gemini-2.5-flash'
+      aiModel: 'gemini-3.5-flash'
     };
   });
 

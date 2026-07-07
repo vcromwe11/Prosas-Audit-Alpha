@@ -16,7 +16,7 @@ const getAiModel = () => {
             }
         }
     } catch (e) {}
-    return 'gemini-2.5-flash'; // Fallback
+    return 'gemini-3.5-flash'; // Fallback
 };
 
 

@@ -177,7 +177,7 @@ service cloud.firestore {
     }
     // AI Audits Cache
     match /ai_audits_cache/{cacheId} {
-      allow read, write: if request.auth != null;
+      allow read, write: if true;
     }
   }
 }

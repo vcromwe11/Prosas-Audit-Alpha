@@ -23,7 +23,7 @@ export interface AuditResult {
 }
 
 export interface CandidateAnalysis {
-  slotId: number;
+  slotId: string;
   id: string;
   candidateName: string;
   files: File[];
@@ -143,7 +143,6 @@ export interface UserProfile {
   state?: string;
   company?: string;
   jobFunction?: string;
-  temporaryPassword?: string;
 }
 
 export interface IdeaComment {
@@ -188,4 +187,6 @@ export interface AppSettings {
   showTooltips: boolean;
   aiModel?: string;
   extractTextLocal?: boolean;
+  maxAiRetries?: number;
+  visualTheme?: string;
 }

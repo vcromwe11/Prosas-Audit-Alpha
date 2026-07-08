@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { AppStage } from '../types';
-import { useAnalysis } from '../contexts/AnalysisContext';
 import { useAuth } from '../contexts/AuthContext';
 import ReportViewer from './ReportViewer';
 import { getReportResult } from '../services/storageService';

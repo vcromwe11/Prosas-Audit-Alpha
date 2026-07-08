@@ -12,7 +12,7 @@ async function startServer() {
     target: 'https://generativelanguage.googleapis.com',
     changeOrigin: true,
     pathRewrite: (path, req) => {
-      let newPath = req.originalUrl;
+      let newPath = (req as any).originalUrl || req.url || '';
       newPath = newPath.replace(/([?&])key=[^&]+(&|$)/, (match, p1, p2) => {
           return p1 === '?' && p2 === '' ? '' : (p1 === '?' ? '?' : (p2 === '' ? '' : '&'));
       });

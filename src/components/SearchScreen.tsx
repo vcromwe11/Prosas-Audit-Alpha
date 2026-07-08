@@ -65,24 +65,24 @@ export const SearchScreen: React.FC<SearchScreenProps> = ({
                             const query = searchQuery.toLowerCase();
                             return report.candidateName.toLowerCase().includes(query) || 
                                    report.editalName.toLowerCase().includes(query) || 
-                                   (report.result?.organizationData?.cnpj && report.result.organizationData.cnpj.toLowerCase().includes(query));
+                                   (report.cnpj && report.cnpj.toLowerCase().includes(query));
                         }).map(report => (
                             <tr key={report.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer" onClick={() => { setSelectedReport(report); handleSetStage(AppStage.REPORT_VIEW); }}>
                                 <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} font-medium text-gray-800 dark:text-gray-100`}>{report.candidateName}</td>
                                 <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>{report.editalName}</td>
-                                <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>{report.result?.organizationData?.cnpj || '-'}</td>
+                                <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>{report.cnpj || '-'}</td>
                                 <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'}`}>
                                     <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold ${
-                                        (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
-                                        (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 
-                                        (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
+                                        (report.manualStatus || report.overallStatus) === 'APROVADO' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' :
+                                        (report.manualStatus || report.overallStatus) === 'REPROVADO' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400' : 
+                                        (report.manualStatus || report.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400'
                                     }`}>
                                         <span className={`w-1.5 h-1.5 rounded-full ${
-                                            (report.manualStatus || report.result.overallStatus) === 'APROVADO' ? 'bg-green-500' :
-                                            (report.manualStatus || report.result.overallStatus) === 'REPROVADO' ? 'bg-red-500' : 
-                                            (report.manualStatus || report.result.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-500' : 'bg-blue-500'
+                                            (report.manualStatus || report.overallStatus) === 'APROVADO' ? 'bg-green-500' :
+                                            (report.manualStatus || report.overallStatus) === 'REPROVADO' ? 'bg-red-500' : 
+                                            (report.manualStatus || report.overallStatus) === 'APROVADO COM RESSALVAS' ? 'bg-yellow-500' : 'bg-blue-500'
                                         }`}></span>
-                                        {report.manualStatus || report.result.overallStatus}
+                                        {report.manualStatus || report.overallStatus}
                                     </span>
                                 </td>
                                 <td className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-right space-x-3`}>

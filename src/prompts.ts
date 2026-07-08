@@ -24,7 +24,7 @@ Retorne ESTRITAMENTE um JSON no seguinte formato:
     {
       "templateName": "Nome exato de um dos modelos listados acima",
       "questionPrefix": "O número da questão (ex: '50', '1.1') onde o documento é solicitado (procure prioritariamente no MODELO DE FORMULÁRIO)",
-      "customValidationRule": "OPCIONAL. Apenas para o CNPJ, se o edital exigir X anos de abertura, substitua o X no código JS: 'isWithinThreeMonths(value, referenceDate) && getAgeInYears(openingDate, referenceDate) >= X'. Se não houver exigência, não mande esse campo.",
+      "customValidationRule": "OPCIONAL. JSON em formato string com as regras de validação estruturadas (sem código JS). Exemplo para exigir 2 anos de idade da empresa: '{\"type\": \"AND\", \"rules\": [{\"type\": \"WITHIN_MONTHS\", \"months\": 3}, {\"type\": \"MIN_AGE_YEARS\", \"years\": 2}]}'. Outro exemplo (para documentos válidos até a data): '{\"type\": \"VALID_TO\"}'. Se não houver exigência específica além da validade padrão, não mande esse campo.",
       "customApprovalTrigger": "OPCIONAL. Ajuste caso o CNPJ precise de X anos (ex: '...e com mais de 1 ano de abertura').",
       "customRejectionTrigger": "OPCIONAL. Ajuste caso o CNPJ precise de X anos (ex: '...ou tempo menor que 1 ano.')."
     }

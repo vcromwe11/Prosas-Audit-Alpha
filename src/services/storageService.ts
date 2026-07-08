@@ -1,6 +1,6 @@
 import { SavedReport, AuditResult, Idea, IdeaComment, StoredPrompt, GlobalPrompt, UserProfile, RepositoryFile, RepositoryFolder, EditalSettings, AuditContext } from '../types';
 import { db, auth, storage } from '../firebase';
-import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, onSnapshot, writeBatch, orderBy, where, updateDoc, limit } from 'firebase/firestore';
+import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, query, onSnapshot, writeBatch, orderBy, where, updateDoc, limit, runTransaction } from 'firebase/firestore';
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
 import { initializeApp } from 'firebase/app';
 import { getAuth, createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
@@ -166,8 +166,7 @@ export const subscribeToUsers = (callback: (users: UserProfile[]) => void) => {
           role: data.role,
           state: data.state,
           company: data.company,
-          jobFunction: data.jobFunction,
-          temporaryPassword: data.temporaryPassword
+          jobFunction: data.jobFunction
         });
       }
     });
@@ -180,11 +179,42 @@ export const subscribeToUsers = (callback: (users: UserProfile[]) => void) => {
   });
 };
 
-export const updateUserProfile = async (uid: string, updates: Partial<UserProfile>) => {
+export const fetchAllTemporaryPasswords = async (uids: string[]): Promise<Record<string, string>> => {
+  const result: Record<string, string> = {};
+  await Promise.all(uids.map(async (uid) => {
+    try {
+      const docSnap = await getDoc(doc(db, `users/${uid}/private/credentials`));
+      if (docSnap.exists() && docSnap.data().temporaryPassword) {
+        result[uid] = docSnap.data().temporaryPassword;
+      }
+    } catch (e) {
+      // ignore
+    }
+  }));
+  return result;
+};
+
+export const updateUserProfile = async (uid: string, updates: Partial<UserProfile> & { temporaryPassword?: string }) => {
   const path = `users/${uid}`;
   try {
     const docRef = doc(db, path);
-    await setDoc(docRef, updates, { merge: true });
+    const firestoreUpdates: any = { ...updates };
+    
+    if ('temporaryPassword' in firestoreUpdates) {
+      const tempPass = firestoreUpdates.temporaryPassword;
+      delete firestoreUpdates.temporaryPassword;
+      
+      const credRef = doc(db, `users/${uid}/private/credentials`);
+      if (tempPass) {
+        await setDoc(credRef, { temporaryPassword: tempPass }, { merge: true });
+      } else {
+        await deleteDoc(credRef).catch(() => {});
+      }
+    }
+    
+    if (Object.keys(firestoreUpdates).length > 0) {
+      await setDoc(docRef, firestoreUpdates, { merge: true });
+    }
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, path);
   }
@@ -212,6 +242,8 @@ export const logAuditAction = async (action: string, details: any = {}) => {
   }
 };
 
+const globalPromptCache = new Map<string, string>();
+
 export const subscribeToGlobalPrompts = (callback: (prompts: GlobalPrompt[]) => void) => {
   const path = `global_prompts`;
   const q = query(collection(db, path));
@@ -224,6 +256,8 @@ export const subscribeToGlobalPrompts = (callback: (prompts: GlobalPrompt[]) => 
       hasChanges = true;
       if (change.type === 'removed') {
         promptsMap.delete(change.doc.id);
+        const key = change.doc.data().key;
+        if (key) globalPromptCache.delete(key);
       } else {
         const data = change.doc.data();
         promptsMap.set(data.id, {
@@ -233,6 +267,9 @@ export const subscribeToGlobalPrompts = (callback: (prompts: GlobalPrompt[]) => 
           updatedBy: data.updatedBy,
           timestamp: data.timestamp
         });
+        if (data.key && data.text) {
+          globalPromptCache.set(data.key, data.text);
+        }
       }
     });
 
@@ -256,12 +293,29 @@ export const updateGlobalPrompt = async (key: string, text: string) => {
       updatedBy: auth.currentUser.email || auth.currentUser.uid,
       timestamp: Date.now()
     });
+    globalPromptCache.set(key, text);
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
   }
 };
 
 export const getGlobalPrompt = async (key: string, defaultText: string): Promise<string> => {
+  if (globalPromptCache.has(key)) {
+    return globalPromptCache.get(key)!;
+  }
+  const path = `global_prompts/${key}`;
+  try {
+    const docRef = doc(db, path);
+    const docSnap = await getDoc(docRef);
+    if (docSnap.exists() && docSnap.data().text) {
+      const text = docSnap.data().text;
+      globalPromptCache.set(key, text);
+      return text;
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, path);
+  }
+  globalPromptCache.set(key, defaultText);
   return defaultText;
 };
 
@@ -309,16 +363,76 @@ export const saveReport = async (editalName: string, result: AuditResult, prompt
   if (!auth.currentUser) return null;
   const userId = auth.currentUser.uid;
   
+  const finalEditalName = editalName || "Edital Geral";
+  
+  const newReportId = Date.now().toString() + Math.random().toString(36).substring(2, 9);
+  
+  let finalEditalId = "1";
+  let finalPropostaId = "1";
+  
+  try {
+      const counterRef = doc(db, 'ai_audits_cache', 'counters');
+      
+      // Try to find an existing editalId for this editalName
+      let existingEditalId = "";
+      const q = query(collection(db, 'reports'), where('editalName', '==', finalEditalName), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+          const existing = snap.docs[0].data();
+          if (existing.editalId) {
+              existingEditalId = existing.editalId;
+          }
+      }
+
+      await runTransaction(db, async (transaction) => {
+          const counterDoc = await transaction.get(counterRef);
+          let nextProposta = 1;
+          let nextEdital = 1;
+          
+          if (counterDoc.exists()) {
+              const data = counterDoc.data();
+              if (data.nextPropostaSeq) nextProposta = data.nextPropostaSeq;
+              if (data.nextEditalSeq) nextEdital = data.nextEditalSeq;
+          }
+          
+          finalPropostaId = String(nextProposta);
+          
+          if (existingEditalId) {
+              finalEditalId = existingEditalId;
+          } else {
+              finalEditalId = String(nextEdital);
+              nextEdital++;
+          }
+          
+          nextProposta++;
+          
+          transaction.set(counterRef, {
+              nextPropostaSeq: nextProposta,
+              nextEditalSeq: nextEdital
+          }, { merge: true });
+          
+          // We can't write the report in this transaction easily without changing too much, 
+          // because we need to save it after generating IDs. Wait, we can just save it normally after transaction.
+      });
+  } catch (e) {
+      console.error("Error generating dynamic IDs", e);
+      // Fallback if transaction fails
+      finalPropostaId = String(Date.now()).slice(-6);
+      finalEditalId = String(Date.now()).slice(-6);
+  }
+
   const newReport: SavedReport = {
-    id: Date.now().toString() + Math.random().toString(36).substring(2, 9),
+    id: newReportId,
     userId: userId,
-    editalName: editalName || "Edital Geral",
+    editalName: finalEditalName,
     candidateName: result.candidateName || "Candidato Desconhecido",
     cnpj: result.organizationData?.cnpj || "N/A",
     timestamp: Date.now(),
     promptId: promptId,
     overallStatus: result.overallStatus,
     documentHash: documentHash,
+    editalId: finalEditalId,
+    propostaId: finalPropostaId,
     result: result // kept in memory for immediate use
   };
 
@@ -476,13 +590,65 @@ export const subscribeToReports = (callback: (groupedReports: Record<string, Sav
           promptId: data.promptId,
           evaluatedBy: data.evaluatedBy,
           evaluatedAt: data.evaluatedAt,
-          documentHash: data.documentHash
+          documentHash: data.documentHash,
+          editalId: data.editalId,
+          propostaId: data.propostaId,
+          userId: data.userId
         });
       }
     });
     
     if (hasChanges || snapshot.empty) {
         const reports = Array.from(reportsMap.values());
+        
+        // Sort chronologically (ascending) to assign sequential IDs to legacy records
+        reports.sort((a, b) => a.timestamp - b.timestamp);
+        
+        let nextProposta = 1;
+        let nextEdital = 1;
+        const editalMap = new Map<string, string>(); // editalName -> editalId
+        
+        // Find maximum existing numeric IDs so we don't reuse them
+        reports.forEach(r => {
+            if (r.propostaId && r.propostaId.trim() !== '') {
+                const num = parseInt(r.propostaId, 10);
+                if (!isNaN(num) && num >= nextProposta) {
+                    nextProposta = num + 1;
+                }
+            }
+            if (r.editalId && r.editalId.trim() !== '') {
+                const num = parseInt(r.editalId, 10);
+                if (!isNaN(num) && num >= nextEdital) {
+                    nextEdital = num + 1;
+                }
+                const finalEditalName = r.editalName || "Edital Geral";
+                editalMap.set(finalEditalName, r.editalId);
+            }
+        });
+        
+        // Assign sequential IDs to reports that don't have them
+        reports.forEach(r => {
+            const finalEditalName = r.editalName || "Edital Geral";
+            
+            // Handle edital ID
+            if (!r.editalId || r.editalId.trim() === '') {
+                let eId = editalMap.get(finalEditalName);
+                if (!eId) {
+                    eId = String(nextEdital);
+                    editalMap.set(finalEditalName, eId);
+                    nextEdital++;
+                }
+                r.editalId = eId;
+            } else {
+                editalMap.set(finalEditalName, r.editalId);
+            }
+            
+            // Handle proposta ID
+            if (!r.propostaId || r.propostaId.trim() === '' || r.propostaId.startsWith('PR-')) {
+                r.propostaId = String(nextProposta);
+                nextProposta++;
+            }
+        });
         
         // Group by Edital Name
         const grouped = reports.reduce((acc, report) => {
@@ -493,10 +659,13 @@ export const subscribeToReports = (callback: (groupedReports: Record<string, Sav
           return acc;
         }, {} as Record<string, SavedReport[]>);
 
-        // Sort the arrays within grouped
+        // Sort the arrays within grouped (descending timestamp by default)
         Object.keys(grouped).forEach(key => {
             grouped[key].sort((a, b) => b.timestamp - a.timestamp);
         });
+        
+        // Sort all reports descending by timestamp for the fallback lists
+        reports.sort((a, b) => b.timestamp - a.timestamp);
         
         callback(grouped, reports);
     }
@@ -536,6 +705,7 @@ export const updateReport = async (report: SavedReport) => {
         }
     });
     
+    console.log("Saving report with data:", dataToSave);
     await setDoc(docRef, dataToSave, { merge: true });
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, path);
@@ -675,7 +845,7 @@ export const deleteIdea = async (id: string) => {
 const secondaryApp = initializeApp(firebaseConfig, "AdminActionApp");
 const secondaryAuth = getAuth(secondaryApp);
 
-export const adminCreateUser = async (profile: Partial<UserProfile>) => {
+export const adminCreateUser = async (profile: Partial<UserProfile> & { temporaryPassword?: string }) => {
   if (!auth.currentUser) throw new Error("Requires authentication");
   
   try {
@@ -715,8 +885,7 @@ export const adminCreateUser = async (profile: Partial<UserProfile>) => {
       role: profile.role || 'viewer',
       state: profile.state || '',
       company: profile.company || '',
-      jobFunction: profile.jobFunction || '',
-      temporaryPassword: profile.temporaryPassword
+      jobFunction: profile.jobFunction || ''
     };
 
     if (!isUpdatingExisting) {
@@ -727,6 +896,13 @@ export const adminCreateUser = async (profile: Partial<UserProfile>) => {
     }
     
     await setDoc(doc(db, `users/${uid}`), newProfile, { merge: true });
+    
+    const credRef = doc(db, `users/${uid}/private/credentials`);
+    if (profile.temporaryPassword) {
+      await setDoc(credRef, { temporaryPassword: profile.temporaryPassword }, { merge: true });
+    } else {
+      await deleteDoc(credRef).catch(() => {});
+    }
     
     // We add this for the frontend to show alert if needed
     newProfile.isPreRegistration = !isUpdatingExisting && uid.startsWith('pre_');
@@ -784,9 +960,15 @@ export const saveAllReports = async (reports: SavedReport[]) => {
 };
 
 // --- Repository Folders ---
-export const subscribeToRepositoryFolders = (callback: (folders: RepositoryFolder[]) => void) => {
+export const subscribeToRepositoryFolders = (isAdmin: boolean, userId: string, callback: (folders: RepositoryFolder[]) => void) => {
   const path = `repository_folders`;
-  const q = query(collection(db, path), orderBy('createdAt', 'desc'));
+  
+  let q;
+  if (isAdmin) {
+    q = query(collection(db, path), orderBy('createdAt', 'desc'));
+  } else {
+    q = query(collection(db, path), where('userId', '==', userId), orderBy('createdAt', 'desc'));
+  }
   
   const foldersMap = new Map<string, RepositoryFolder>();
 
@@ -884,10 +1066,15 @@ export const deleteRepositoryFolder = async (folderId: string) => {
 };
 
 // --- Repository Files ---
-export const subscribeToRepositoryFilesAll = (callback: (files: RepositoryFile[]) => void) => {
+export const subscribeToRepositoryFilesAll = (isAdmin: boolean, userId: string, callback: (files: RepositoryFile[]) => void) => {
   const path = `repository_files`;
   
-  const q = query(collection(db, path));
+  let q;
+  if (isAdmin) {
+    q = query(collection(db, path));
+  } else {
+    q = query(collection(db, path), where('userId', '==', userId));
+  }
   
   return onSnapshot(q, (snapshot) => {
     const files = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as RepositoryFile));
@@ -895,15 +1082,22 @@ export const subscribeToRepositoryFilesAll = (callback: (files: RepositoryFile[]
   });
 };
 
-export const subscribeToRepositoryFiles = (folderId: string | null, callback: (files: RepositoryFile[]) => void) => {
+export const subscribeToRepositoryFiles = (folderId: string | null, isAdmin: boolean, userId: string, callback: (files: RepositoryFile[]) => void) => {
   const path = `repository_files`;
   
-  // Use 'in' to check for both strictly null and empty string if we're at root
   let q;
-  if (!folderId) {
-     q = query(collection(db, path), where('folderId', 'in', [null, '']));
+  if (isAdmin) {
+    if (!folderId) {
+       q = query(collection(db, path), where('folderId', 'in', [null, '']));
+    } else {
+       q = query(collection(db, path), where('folderId', '==', folderId));
+    }
   } else {
-     q = query(collection(db, path), where('folderId', '==', folderId));
+    if (!folderId) {
+       q = query(collection(db, path), where('folderId', 'in', [null, '']), where('userId', '==', userId));
+    } else {
+       q = query(collection(db, path), where('folderId', '==', folderId), where('userId', '==', userId));
+    }
   }
   
   const filesMap = new Map<string, RepositoryFile>();
@@ -941,24 +1135,6 @@ export const uploadRepositoryFile = async (folderId: string | null, file: File, 
         const chunkSize = 250000; // 250KB per chunk to be safely under 1MB even with overhead
         const chunksCount = Math.ceil(base64Data.length / chunkSize);
         
-        for (let i = 0; i < chunksCount; i++) {
-          const chunkData = base64Data.substring(i * chunkSize, (i + 1) * chunkSize);
-          const chunkPath = `repository_files/${fileId}/chunks/chunk_${i}`;
-          try {
-             // Added await with simple Promise wrapper to ensure event loop ticks
-             await new Promise(r => setTimeout(r, 10));
-             await setDoc(doc(db, chunkPath), { data: chunkData });
-             console.log(`Uploaded chunk ${i+1}/${chunksCount}`);
-          } catch(err) {
-             console.error("Error setting chunk doc:", chunkPath, err);
-             throw err;
-          }
-          
-          if (onProgress) {
-             onProgress(Math.round(((i + 1) / chunksCount) * 100));
-          }
-        }
-        
         const path = `repository_files/${fileId}`;
         const newFile: RepositoryFile = {
             id: fileId,
@@ -978,6 +1154,25 @@ export const uploadRepositoryFile = async (folderId: string | null, file: File, 
             console.error("Error setting main file doc:", path, err);
             throw err;
         }
+
+        for (let i = 0; i < chunksCount; i++) {
+          const chunkData = base64Data.substring(i * chunkSize, (i + 1) * chunkSize);
+          const chunkPath = `repository_files/${fileId}/chunks/chunk_${i}`;
+          try {
+             // Added await with simple Promise wrapper to ensure event loop ticks
+             await new Promise(r => setTimeout(r, 10));
+             await setDoc(doc(db, chunkPath), { data: chunkData });
+             console.log(`Uploaded chunk ${i+1}/${chunksCount}`);
+          } catch(err) {
+             console.error("Error setting chunk doc:", chunkPath, err);
+             throw err;
+          }
+          
+          if (onProgress) {
+             onProgress(Math.round(((i + 1) / chunksCount) * 100));
+          }
+        }
+        
         resolve(fileId);
       } catch (e) {
           reject(e);
@@ -1112,4 +1307,8 @@ export const getEditalSettings = async (editalName: string): Promise<EditalSetti
     handleFirestoreError(error, OperationType.GET, path);
     return null;
   }
+};
+
+export const migrateDynamicIds = async () => {
+    console.log("No-op: migrateDynamicIds is no longer used since sequential IDs are calculated dynamically and automatically.");
 };

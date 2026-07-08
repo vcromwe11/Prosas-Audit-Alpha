@@ -1,8 +1,8 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { UserProfile } from '../types';
 import { auth, googleProvider } from '../firebase';
-import { signInWithPopup, createUserWithEmailAndPassword, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider, linkWithPopup } from 'firebase/auth';
-import { subscribeToUsers, updateUserProfile } from '../services/storageService';
+import { signInWithPopup, signInWithEmailAndPassword, onAuthStateChanged, signOut, GoogleAuthProvider } from 'firebase/auth';
+import { subscribeToUsers } from '../services/storageService';
 
 interface AuthContextType {
   user: UserProfile | null;
@@ -18,12 +18,6 @@ interface AuthContextType {
   handleEmailAuth: (e: React.FormEvent) => Promise<void>;
   handleGoogleAuth: () => Promise<void>;
   handleLogout: () => Promise<void>;
-  driveToken: string | null;
-  driveStatus: 'disconnected' | 'ready' | 'syncing' | 'error';
-  driveMsg: string;
-  connectDrive: () => Promise<void>;
-  setDriveStatus: (status: 'disconnected' | 'ready' | 'syncing' | 'error') => void;
-  setDriveMsg: (msg: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -37,24 +31,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [password, setPassword] = useState('');
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [authError, setAuthError] = useState('');
-  
-  // Drive State
-  const [driveToken, setDriveToken] = useState<string | null>(null);
-  const [driveStatus, setDriveStatus] = useState<'disconnected' | 'ready' | 'syncing' | 'error'>('disconnected');
-  const [driveMsg, setDriveMsg] = useState('');
 
   useEffect(() => {
     let unsubscribeUsers: () => void;
     
-    const unsubscribeAuth = onAuthStateChanged(auth, (firebaseUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
         if (firebaseUser) {
+            try {
+                const { syncUserProfile } = await import('../services/storageService');
+                await syncUserProfile();
+            } catch (e) {
+                console.error("Error syncing profile:", e);
+            }
+
             unsubscribeUsers = subscribeToUsers((users) => {
                 const appUser = users.find(u => u.uid === firebaseUser.uid);
                 if (appUser) {
                     setUser(appUser);
                 } else {
-                    // Do not attempt to persist standard new users here to prevent rule errors.
-                    // syncUserProfile in App.tsx correctly handles the pre-registration logic and signout.
                     setUser({
                         uid: firebaseUser.uid,
                         name: firebaseUser.displayName || firebaseUser.email?.split('@')[0] || 'Usuário',
@@ -63,10 +57,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                         role: 'viewer'
                     });
                 }
-            });
-            // Try to restore Drive token from Google provider if returning
-            firebaseUser.getIdTokenResult().then(() => {
-                // Not getting token directly from here, handled differently usually, but we keep state clean
             });
         } else {
             setUser(null);
@@ -107,11 +97,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
           const result = await signInWithPopup(auth, googleProvider);
           const credential = GoogleAuthProvider.credentialFromResult(result);
-          if (credential && credential.accessToken) {
-              setDriveToken(credential.accessToken);
-              setDriveStatus('ready');
-              setDriveMsg('Conectado ao Drive');
-          }
       } catch (error: any) {
           setAuthError(error.message || "Erro no login com Google.");
       }
@@ -119,51 +104,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const handleLogout = async () => {
       await signOut(auth);
-      setDriveToken(null);
-      setDriveStatus('disconnected');
-      setDriveMsg('');
-  };
-
-  const connectDrive = async () => {
-      try {
-          if (!auth.currentUser) return;
-          
-          let credential;
-          
-          const isGoogleLinked = auth.currentUser.providerData.some(p => p.providerId === 'google.com');
-          
-          if (isGoogleLinked) {
-              const result = await signInWithPopup(auth, googleProvider);
-              credential = GoogleAuthProvider.credentialFromResult(result);
-          } else {
-              const result = await linkWithPopup(auth.currentUser, googleProvider);
-              credential = GoogleAuthProvider.credentialFromResult(result);
-          }
-
-          if (credential && credential.accessToken) {
-              setDriveToken(credential.accessToken);
-              setDriveStatus('ready');
-              setDriveMsg('Conectado ao Drive');
-          } else {
-              setDriveStatus('error');
-              setDriveMsg('Não foi possível obter a credencial do Drive.');
-          }
-      } catch (error: any) {
-          console.error("Erro ao conectar Google Drive:", error);
-          if (error.code === 'auth/credential-already-in-use') {
-              alert("Atenção: Esta conta Google já está cadastrada no sistema ou vinculada a outro usuário. Para acessar o Drive com esta conta, você deve fazer login diretamente através do Google na tela inicial.");
-          }
-          setDriveStatus('error');
-          setDriveMsg('Erro na autenticação.');
-      }
   };
 
   return (
     <AuthContext.Provider value={{
       user, loading, email, setEmail, password, setPassword,
       isLoginMode, setIsLoginMode, authError, setAuthError,
-      handleEmailAuth, handleGoogleAuth, handleLogout,
-      driveToken, driveStatus, setDriveStatus, driveMsg, setDriveMsg, connectDrive
+      handleEmailAuth, handleGoogleAuth, handleLogout
     }}>
       {children}
     </AuthContext.Provider>

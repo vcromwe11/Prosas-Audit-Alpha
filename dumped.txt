@@ -1,0 +1,740 @@
+const [candidates, setCandidates] = useState<CandidateAnalysis[]>([]);
+
+
+  const addNewSlot = () => {
+    
+        setCandidates(prev => [...prev, {
+        slotId: Math.random().toString(36).substring(7),
+        files: [],
+        candidateName: "",
+        status: 'pending'
+        }]);
+  };
+
+  const removeSlot = (slotId: string) => {
+    setCandidates(prev => prev.filter(c => c.slotId !== slotId));
+  };
+
+  // --- LIFECYCLE & PERSISTENCE ---
+
+  // 0. Dark Mode & Auth Listener
+  useEffect(() => {
+    const root = window.document.documentElement;
+    if (isDarkMode) {
+      root.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      root.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  
+  useEffect(() => {
+    if (user && stage === AppStage.LOGIN) {
+      handleSetStage(AppStage.DASHBOARD);
+    } else if (!user && stage !== AppStage.LOGIN) {
+      setCandidates([]);
+      setSelectedReport(null);
+      setContext({
+        editalTitle: '',
+        regulationText: '',
+        formTemplateText: '',
+        miscFilesText: '',
+        criteriaText: DEFAULT_DOCUMENT_CRITERIA,
+        authRules: [],
+        isReady: false
+      });
+      localStorage.removeItem(CONTEXT_STORAGE_KEY);
+      handleSetStage(AppStage.LOGIN);
+    }
+  }, [user]);
+
+  // 1. Load context from localStorage on startup
+  useEffect(() => {
+    const savedContext = localStorage.getItem(CONTEXT_STORAGE_KEY);
+    if (savedContext) {
+        try {
+            const parsed = JSON.parse(savedContext);
+            setContext(prev => ({ ...prev, ...parsed }));
+        } catch (e) {
+            console.error("Failed to load context backup", e);
+        }
+    }
+
+    // Fetch global prompt modules from Firestore on startup
+    fetchGlobalPromptModules().then(mods => {
+        setGlobalPromptModules(mods);
+    }).catch(err => {
+        console.error("Failed to load global prompt modules on mount", err);
+    });
+  }, []);
+
+  // 2. Save context changes to localStorage
+  useEffect(() => {
+      // Debounce saving to avoid hitting disk on every keystroke
+      const handler = setTimeout(() => {
+          localStorage.setItem(CONTEXT_STORAGE_KEY, JSON.stringify({
+              editalTitle: context.editalTitle,
+              regulationText: context.regulationText,
+              formTemplateText: context.formTemplateText,
+              miscFilesText: context.miscFilesText,
+              criteriaText: context.criteriaText,
+              referenceDate: context.referenceDate,
+              authRules: context.authRules,
+              promptModules: context.promptModules
+          }));
+      }, 1000);
+      return () => clearTimeout(handler);
+  }, [context]);
+
+  // Subscribe to comments when an idea is selected
+  useEffect(() => {
+    if (selectedIdea) {
+      const unsubscribe = subscribeToComments(selectedIdea.id, (comments) => {
+        setIdeaComments(prev => ({
+          ...prev,
+          [selectedIdea.id]: comments
+        }));
+      });
+      return () => unsubscribe();
+    }
+  }, [selectedIdea]);
+
+  // 3. Prevent accidental tab close
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (candidates.some(c => c.status === 'analyzing' || c.status === 'pending')) {
+        e.preventDefault();
+        e.returnValue = ''; // Required for Chrome
+        return "Há análises em andamento ou pendentes. Se sair, perderá o progresso não salvo.";
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [candidates]);
+
+
+  // Load reports and ideas when user logs in or reportLimit changes
+  useEffect(() => {
+    if (user) {
+      migrateUserReports();
+      const unsubscribeReports = subscribeToReports((grouped, all) => {
+        setGroupedReports(grouped);
+        setAllReports(all);
+      }, reportLimit);
+      
+      const unsubscribeIdeas = subscribeToIdeas((newIdeas) => {
+        setIdeas(newIdeas);
+      });
+
+      return () => {
+        unsubscribeReports();
+        unsubscribeIdeas();
+      };
+    } else {
+      setGroupedReports({});
+      setAllReports([]);
+      setIdeas([]);
+    }
+  }, [user, reportLimit]);
+
+  
+  
+  
+  // --- DRIVE HANDLERS ---
+  
+  
+  const handleBackupToDrive = async () => {
+      if (!driveToken) return;
+      setDriveStatus('syncing');
+      setDriveMsg('Salvando...');
+      
+      try {
+          const reports = allReports;
+          // Find existing file to overwrite, or create new
+          const existingFileId = await findBackupFile(driveToken);
+          await uploadToDrive(driveToken, reports, existingFileId);
+          
+          setDriveStatus('ready');
+          setDriveMsg(`Backup salvo! (${reports.length} itens)`);
+          setTimeout(() => setDriveMsg('Conectado ao Drive'), 3000);
+      } catch (e: any) {
+          console.error(e);
+          if (e.name === 'DriveAuthError' || e.message?.includes('Token expirado') || e.message?.includes('401')) {
+              setDriveStatus('disconnected');
+              setDriveToken(null);
+              setDriveMsg('Sessão expirada. Reconecte-se.');
+              // Optional: you can alert, but since backup happens in background, it might be annoying.
+              // For user-triggered actions, an alert is good. Here, setting status to disconnected is safe.
+          } else {
+              setDriveStatus('error');
+              setDriveMsg('Erro ao salvar');
+          }
+      }
+  };
+
+  const handleRestoreFromDrive = async () => {
+      if (!checkPermission('mutate_data')) {
+          alert('Você não tem permissão para realizar esta ação.');
+          return;
+      }
+      if (!driveToken) return;
+      
+      if (!window.confirm("Isso substituirá os dados atuais pelos do Drive. Continuar?")) return;
+
+      setDriveStatus('syncing');
+      setDriveMsg('Baixando...');
+      
+      try {
+          const fileId = await findBackupFile(driveToken);
+          if (!fileId) {
+              setDriveStatus('error');
+              setDriveMsg('Nenhum backup encontrado.');
+              return;
+          }
+          
+          const data = await downloadFromDrive(driveToken, fileId);
+          if (Array.isArray(data)) {
+              await saveAllReports(data);
+              setDriveStatus('ready');
+              setDriveMsg('Restaurado com sucesso!');
+          } else {
+              throw new Error("Formato inválido");
+          }
+      } catch (e: any) {
+          console.error(e);
+          if (e.name === 'DriveAuthError' || e.message?.includes('Token expirado') || e.message?.includes('401')) {
+              setDriveStatus('disconnected');
+              setDriveToken(null);
+              setDriveMsg('Sessão expirada. Reconecte-se.');
+              alert("Sua sessão do Google Drive expirou. Por favor, conecte-se novamente.");
+          } else {
+              setDriveStatus('error');
+              setDriveMsg('Erro ao restaurar');
+          }
+      }
+  };
+
+  // --- ANALYSIS HANDLERS ---
+
+  const handleSlotFilesSelected = async (event: React.ChangeEvent<HTMLInputElement>, slotId: string) => {
+      const rawFiles = Array.from(event.target.files || []) as File[];
+      if (rawFiles.length === 0) return;
+
+      setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, isLoadingFiles: true } : c));
+
+      // Extract ZIPs if necessary
+      const processedFiles: File[] = [];
+      for (const file of rawFiles) {
+          if (file.name.endsWith('.zip')) {
+              try {
+                  const extracted = await extractPdfsFromZip(file);
+                  processedFiles.push(...extracted);
+              } catch (e: any) {
+                  alert(`Erro ao extrair ZIP ${file.name}: ${e.message}`);
+              }
+          } else {
+              processedFiles.push(file);
+          }
+      }
+
+      if (processedFiles.length === 0) {
+          alert("Nenhum arquivo PDF válido encontrado.");
+          setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, candidateName: "", isLoadingFiles: false } : c));
+          return;
+      }
+      
+      setCandidates(prev => prev.map(c => {
+          if (c.slotId === slotId) {
+              const baseName = rawFiles[0].name.replace(/\.(pdf|zip)$/i, '');
+              const displayName = processedFiles.length > 1 && rawFiles.length === 1 && rawFiles[0].name.endsWith('.zip') 
+                ? `${baseName} (${processedFiles.length} docs)` 
+                : baseName;
+
+              return {
+                  ...c,
+                  files: processedFiles,
+                  candidateName: displayName, 
+                  status: 'pending',
+                  isLoadingFiles: false
+              };
+          }
+          return c;
+      }));
+  };
+
+  const handleRepoFileSelect = async (repoFiles: RepositoryFile[]) => {
+      try {
+          if (!repoFiles || repoFiles.length === 0) return;
+          
+          if (typeof repoPickerTarget === 'string' && ['regulation', 'form', 'misc'].includes(repoPickerTarget)) {
+              setLoadingContext(true);
+          } else {
+              setCandidates(prev => prev.map(c => c.slotId === repoPickerTarget ? { ...c, isLoadingFiles: true } : c));
+          }
+
+          const files = await Promise.all(repoFiles.map(rf => getRepositoryFileAsFile(rf)));
+          const mockEvent = { target: { files: files } } as any;
+          
+          if (repoPickerTarget === 'batch') {
+              // Create new slots for each selected file (expecting ZIPs or PDFs)
+              const newCandidates = [];
+              for (const file of files) {
+                  const newSlotId = Math.random().toString(36).substring(7);
+                  newCandidates.push({
+                      slotId: newSlotId,
+                      files: [file], // Temporarily set the raw file, will extract next
+                      candidateName: file.name.replace(/\.(pdf|zip)$/i, ''),
+                      status: 'pending',
+                      isLoadingFiles: true
+                  });
+              }
+              setCandidates(prev => [...prev, ...newCandidates]);
+              
+              // Process each file (e.g., extract ZIP)
+              for (let i = 0; i < files.length; i++) {
+                  const file = files[i];
+                  const slotId = newCandidates[i].slotId;
+                  
+                  if (file.name.endsWith('.zip')) {
+                      extractPdfsFromZip(file).then(extracted => {
+                          setCandidates(prev => prev.map(c => {
+                              if (c.slotId === slotId) {
+                                  return { 
+                                      ...c, 
+                                      files: extracted, 
+                                      isLoadingFiles: false,
+                                      candidateName: extracted.length > 1 ? `${c.candidateName} (${extracted.length} docs)` : c.candidateName
+                                  };
+                              }
+                              return c;
+                          }));
+                      }).catch(e => {
+                          alert(`Erro ao extrair ZIP ${file.name}: ${e.message}`);
+                          setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, isLoadingFiles: false, error: e.message, status: 'error' } : c));
+                      });
+                  } else {
+                      setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, isLoadingFiles: false } : c));
+                  }
+              }
+          } else if (typeof repoPickerTarget === 'string' && ['regulation', 'form', 'misc'].includes(repoPickerTarget)) {
+              handleContextUpload(mockEvent, repoPickerTarget as 'regulation' | 'form' | 'misc');
+          } else if (typeof repoPickerTarget === 'string') {
+              // Note: slotId is now a UUID string, so we need to handle it properly
+              handleSlotFilesSelected(mockEvent, repoPickerTarget);
+          } else if (typeof repoPickerTarget === 'number') {
+              handleSlotFilesSelected(mockEvent, repoPickerTarget.toString());
+          }
+      } catch (err) {
+          console.error("Error pulling file from repo:", err);
+          alert("Erro ao puxar documento do repositório");
+          if (typeof repoPickerTarget === 'string' && ['regulation', 'form', 'misc'].includes(repoPickerTarget)) {
+              setLoadingContext(false);
+          } else {
+              setCandidates(prev => prev.map(c => c.slotId === repoPickerTarget ? { ...c, isLoadingFiles: false } : c));
+          }
+      }
+  };
+
+  const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'regulation' | 'form' | 'misc') => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    setLoadingContext(true);
+    try {
+        const text = await extractTextFromPdf(file);
+        if (!text || text.trim().length === 0) {
+            alert("Atenção: O arquivo parece estar vazio ou a IA não conseguiu extrair texto dele. Se for uma imagem digitalizada, tente usar um PDF com texto.");
+        }
+        setContext(prev => {
+            const newContext = { ...prev };
+            if (type === 'regulation') {
+                newContext.regulationText = text;
+                if (!newContext.editalTitle || newContext.editalTitle === 'Novo Edital') {
+                    const firstLine = text.split('\n')[0]?.trim().substring(0, 150);
+                    newContext.editalTitle = firstLine && firstLine.length > 5 ? firstLine : "Novo Edital";
+                }
+            }
+            if (type === 'form') newContext.formTemplateText = text;
+            if (type === 'misc') newContext.miscFilesText = text;
+            return newContext;
+        });
+    } catch (err) {
+        alert("Erro ao ler arquivo: " + err);
+    } finally {
+        setLoadingContext(false);
+    }
+  };
+
+  const [isDetectingModules, setIsDetectingModules] = useState(false);
+  const [globalPromptModules, setGlobalPromptModules] = useState<Omit<DocumentPromptModule, 'id'>[]>(FALLBACK_PROMPT_MODULE_TEMPLATES);
+  const [expandedModuleId, setExpandedModuleId] = useState<string | null>(null);
+  const [savingModuleIds, setSavingModuleIds] = useState<Record<string, 'saving' | 'saved' | null>>({});
+  const [isSavingAllModules, setIsSavingAllModules] = useState<'idle' | 'saving' | 'saved'>('idle');
+
+  const getModuleSyncStatus = (mod: DocumentPromptModule) => {
+      const matched = globalPromptModules.find(g => g.documentType.trim().toLowerCase() === mod.documentType.trim().toLowerCase());
+      if (!matched) return 'new'; // New module (not in defaults)
+      
+      const isDifferent = 
+          matched.promptInstructions?.trim() !== mod.promptInstructions?.trim() ||
+          matched.description?.trim() !== mod.description?.trim() ||
+          matched.isActive !== mod.isActive;
+          
+      return isDifferent ? 'modified' : 'synced';
+  };
+
+  const handleSaveSingleModule = async (mod: DocumentPromptModule) => {
+      setSavingModuleIds(prev => ({ ...prev, [mod.id]: 'saving' }));
+      try {
+          await saveGlobalPromptModule(mod, user?.email || 'admin');
+          setSavingModuleIds(prev => ({ ...prev, [mod.id]: 'saved' }));
+          
+          // Refresh global templates
+          const updated = await fetchGlobalPromptModules();
+          setGlobalPromptModules(updated);
+          
+          setTimeout(() => {
+              setSavingModuleIds(prev => ({ ...prev, [mod.id]: null }));
+          }, 3000); // Reset saved status after 3 seconds
+      } catch (e) {
+          console.error(e);
+          alert('Erro ao salvar módulo');
+          setSavingModuleIds(prev => ({ ...prev, [mod.id]: null }));
+      }
+  };
+
+  const handleSaveAllModules = async () => {
+      if (!context.promptModules || context.promptModules.length === 0) return;
+      setIsSavingAllModules('saving');
+      try {
+          for (const mod of context.promptModules) {
+              await saveGlobalPromptModule(mod, user?.email || 'admin');
+          }
+          // Refresh global templates
+          const updated = await fetchGlobalPromptModules();
+          setGlobalPromptModules(updated);
+          setIsSavingAllModules('saved');
+          setTimeout(() => {
+              setIsSavingAllModules('idle');
+          }, 3000);
+      } catch (e) {
+          console.error(e);
+          alert('Erro ao salvar alguns módulos.');
+          setIsSavingAllModules('idle');
+      }
+  };
+  const handleModuleDrop = (e: React.DragEvent, dropIdx: number) => {
+      e.preventDefault();
+      if (draggedModuleIdx === null || draggedModuleIdx === dropIdx) return;
+      
+      let newMods = [...(context.promptModules || [])];
+      
+      // If we're dragging a fixed module, don't allow it
+      const draggedDocType = newMods[draggedModuleIdx].documentType.trim().toLowerCase();
+      if (draggedDocType === 'orquestrador da esteira' || draggedDocType === 'cartão cnpj') {
+          setDraggedModuleIdx(null);
+          return;
+      }
+      
+      const dropDocType = newMods[dropIdx].documentType.trim().toLowerCase();
+      // even if dropped on a fixed module, enforceModuleOrder will fix it, 
+      // but we shouldn't allow reordering them, enforce will push them back to top, 
+      // which is fine, but visually it's just better to do the splice and let enforce fix the rest.
+      
+      const draggedMod = newMods.splice(draggedModuleIdx, 1)[0];
+      newMods.splice(dropIdx, 0, draggedMod);
+      
+      setContext({...context, promptModules: enforceModuleOrder(newMods)});
+      setDraggedModuleIdx(null);
+  };
+
+  const [draggedModuleIdx, setDraggedModuleIdx] = useState<number | null>(null);
+  const [draggableModuleId, setDraggableModuleId] = useState<string | null>(null);
+  const enforceModuleOrder = (modules: DocumentPromptModule[]) => {
+      const orqIdx = modules.findIndex(m => m.documentType.trim().toLowerCase() === 'orquestrador da esteira');
+      let orqModule = null;
+      if (orqIdx !== -1) {
+          orqModule = modules.splice(orqIdx, 1)[0];
+      }
+
+      const cnpjIdx = modules.findIndex(m => m.documentType.trim().toLowerCase() === 'cartão cnpj');
+      let cnpjModule = null;
+      if (cnpjIdx !== -1) {
+          cnpjModule = modules.splice(cnpjIdx, 1)[0];
+      }
+
+      const result = [...modules];
+      if (cnpjModule) result.unshift(cnpjModule);
+      if (orqModule) result.unshift(orqModule);
+      return result;
+  };
+
+  const moveModule = (idx: number, direction: 'up' | 'down') => {
+      let newMods = [...(context.promptModules || [])];
+      
+      const docType = newMods[idx].documentType.trim().toLowerCase();
+      if (docType === 'orquestrador da esteira' || docType === 'cartão cnpj') return;
+      
+      if (direction === 'up' && idx > 0) {
+          const prevDocType = newMods[idx - 1].documentType.trim().toLowerCase();
+          if (prevDocType === 'orquestrador da esteira' || prevDocType === 'cartão cnpj') return;
+          const temp = newMods[idx - 1];
+          newMods[idx - 1] = newMods[idx];
+          newMods[idx] = temp;
+      } else if (direction === 'down' && idx < newMods.length - 1) {
+          const nextDocType = newMods[idx + 1].documentType.trim().toLowerCase();
+          if (nextDocType === 'orquestrador da esteira' || nextDocType === 'cartão cnpj') return;
+          const temp = newMods[idx + 1];
+          newMods[idx + 1] = newMods[idx];
+          newMods[idx] = temp;
+      }
+      
+      newMods = enforceModuleOrder(newMods);
+      setContext({...context, promptModules: enforceModuleOrder(newMods)});
+  };
+
+        
+  const handleDetectModules = async () => {
+      if (!context.regulationText) return;
+      setIsDetectingModules(true);
+      try {
+          const result = await generatePromptModulesFromRegulation(context.regulationText, globalPromptModules);
+          
+          if (result.updatedModules && result.updatedModules.length > 0) {
+              // Add IDs to the updated modules
+              const newModsWithIds = result.updatedModules.map(m => ({
+                  ...m,
+                  id: Math.random().toString(36).substring(7)
+              }));
+              
+              setContext(prev => ({
+                  ...prev, 
+                  promptModules: enforceModuleOrder(newModsWithIds), 
+                  referenceDate: result.referenceDate || prev.referenceDate
+              }));
+          }
+      } catch (error) {
+          console.error("Error auto-detecting modules:", error);
+          alert("Ocorreu um erro ao detectar os módulos. Tente novamente.");
+      } finally {
+          setIsDetectingModules(false);
+      }
+  }
+
+  ;
+
+  const handleGenerateCriteria = async (mode: 'standard' | 'economical' | 'specialized') => {
+      if (!context.regulationText) {
+          alert("Por favor, envie o regulamento primeiro.");
+          return;
+      }
+      setIsGeneratingCriteria(true);
+      try {
+          const criteria = await generateCriteriaFromRegulation(context.regulationText, mode);
+          if (criteria) {
+              setContext(prev => ({
+                  ...prev,
+                  criteriaText: criteria
+              }));
+          }
+      } catch (error) {
+          console.error("Error generating criteria:", error);
+          alert("Ocorreu um erro ao gerar critérios. Tente novamente.");
+      } finally {
+          setIsGeneratingCriteria(false);
+      }
+  };
+
+  
+  const cancelAnalysis = (slotId: number) => {
+      if (abortControllersRef.current[slotId]) {
+          abortControllersRef.current[slotId].abort();
+      }
+  };
+
+  // 4. Iniciar Análise (Trigger Manual)
+  const triggerAnalysis = async (slotId: number, withAuth: boolean = false) => {
+      if (!checkPermission('mutate_data')) {
+          alert('Você não tem permissão para realizar esta ação.');
+          return;
+      }
+      const candidateIndex = candidates.findIndex(c => c.slotId === slotId);
+      if (candidateIndex === -1) return;
+      const candidate = candidates[candidateIndex];
+
+      if (!candidate.files || candidate.files.length === 0) {
+          alert("Adicione arquivos PDF primeiro.");
+          return;
+      }
+
+      await logAuditAction('INICIAR_ANALISE_PROJETO', { candidateName: candidate.candidateName, slotId });
+
+      const abortController = new AbortController();
+      abortControllersRef.current[slotId] = abortController;
+
+      // Set status to analyzing
+      setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, status: 'analyzing', analysisPhase: 'AUTH' } : c));
+
+      try {
+        let authReport = "";
+        let deterministicAuthPassed = true;
+        let filesForAi = [...candidate.files];
+
+        // 1. Run Deterministic Auth se NÃO estiver na IA Otimizada
+        if (withAuth && (context.authRules || []).length > 0 && analysisMode !== 'IA_OTIMIZADA') {
+            const { runDeterministicAuth } = await import('./services/authEvaluator');
+            const authResult = await runDeterministicAuth(candidate.files, context.authRules || [], context.referenceDate, (msg) => {
+                // Update specific slot progress to show the analyst what is being validated
+                setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, currentAuthTask: msg } : c));
+            });
+            authReport = authResult.report;
+            deterministicAuthPassed = authResult.passed;
+            if (analysisMode === 'IA_OTIMIZADA') {
+                filesForAi = candidate.files.filter(f => !authResult.processedFiles.includes(f.name));
+            }
+        }
+
+        // Generate a fast hash based on file metadata + analysis context
+        const hashPayload = filesForAi.map(f => `${f.name}-${f.size}-${f.lastModified}`).join('|') 
+            + "|" + context.regulationText 
+            + "|" + context.criteriaText 
+            + "|" + (withAuth ? "auth" : "no-auth")
+            + "|" + context.referenceDate;
+        
+        const hashBuffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(hashPayload));
+        const documentHash = Array.from(new Uint8Array(hashBuffer)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        const cachedReport = allReports.find(r => r.documentHash === documentHash && r.documentHash !== undefined);
+        let result: any;
+        let promptText = "";
+
+        if (cachedReport && cachedReport.result) {
+            console.log("CACHE HIT: Reusing existing analysis for documentHash", documentHash);
+            result = cachedReport.result;
+            promptText = "Cached Request - Retirado do histórico para economizar tempo e cota.";
+            
+            // Simula um loading rápido para UX
+            for (let i = 0; i <= 10; i++) {
+                if (abortController.signal.aborted) throw new Error("AbortError");
+                setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, partialStream: "Recuperando dados em cache..." + ".".repeat(i) } : c));
+                await new Promise(r => setTimeout(r, 100));
+            }
+            
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
+        } else if (analysisMode !== 'IA_OTIMIZADA' && !deterministicAuthPassed) {
+            // Short-circuit: Reprovado (Inabilitação Documental) without calling AI
+            result = {
+                summary: authReport + "\n\n--- ANÁLISE INTERROMPIDA ---\n\nO candidato falhou nas triagens obrigatórias, sendo reprovado por Inabilitação Documental sem a necessidade de prosseguir com a fase de IA Completa.",
+                overallStatus: 'REPROVADO',
+                points: [{
+                    title: "Inabilitação Documental (Pré-Análise)",
+                    status: "ERROR",
+                    justification: "Candidato retido na triagem automática de documentos institucionais obrigatórios."
+                }],
+                candidateName: "Candidato Identificado na Triagem",
+                organizationData: {}
+            };
+            promptText = "N/A (Reprovação Determinística)";
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
+        } else {
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'AI_PROMPT' } : c));
+            
+            let criteriaForAi = context.criteriaText;
+
+            // Se for IA OTIMIZADA, anexa os módulos de prompt ativos!
+            if (analysisMode === 'IA_OTIMIZADA') {
+                const activeModules = (context.promptModules || []).filter(m => m.isActive);
+                if (activeModules.length > 0) {
+                    const modulesPrompt = activeModules.map(m => `--- ${m.documentType} ---\n${m.promptInstructions}`).join("\n\n");
+                    criteriaForAi += "\n\n=== INSTRUÇÕES ESPECÍFICAS DE DOCUMENTOS (IA OTIMIZADA) ===\n";
+                    criteriaForAi += "⚠️ REGRAS OBRIGATÓRIAS PARA TODOS OS DOCUMENTOS:\n";
+                    criteriaForAi += "1. CNPJ OBRIGATÓRIO: É IMPERATIVO que em TODOS os documentos analisados (sem exceção), os dados do CNPJ ou da Razão Social sejam correspondentes/iguais. Isso é para garantir que os documentos pertençam à mesma organização.\n";
+                    criteriaForAi += "2. TRIAGEM DOS ARQUIVOS: O seu primeiro movimento nesta análise DEVE SER localizar entre os documentos enviados quais são aqueles exigidos pelos módulos abaixo.\n";
+                    criteriaForAi += "   - DESCARTE imediatamente qualquer documento enviado que NÃO seja exigido pelos módulos (ex: se enviaram foto de projeto mas não há módulo pedindo isso, descarte).\n";
+                    criteriaForAi += "   - No início do seu relatório final, você DEVE listar os arquivos enviados e sinalizar visualmente se foram utilizados ou descartados (ex: '✅ [Nome do Arquivo] - Utilizado', '❌ [Nome do Arquivo] - Descartado'). Arquivos descartados NÃO devem entrar na análise subsequente, e você NÃO DEVE gerar pontos de checagem (points) no JSON para eles. Eles devem ser sumariamente ignorados do banco de dados final.\n\n";
+                    criteriaForAi += "Analise APENAS os documentos exigidos nos módulos a seguir utilizando as respectivas instruções:\n\n" + modulesPrompt;
+                }
+            } else if (authReport) {
+                const optimizedInstruction = analysisMode === 'IA_OTIMIZADA' 
+                    ? "1. Os documentos descritos no relatório acima JÁ FORAM APROVADOS e não foram anexados agora para poupar processamento. NÃO cobre a existência ou validade deles novamente.\n2."
+                    : "1. Os documentos descritos no relatório acima JÁ FORAM AVALIADOS. Você os recebeu nos anexos, mas pode confiar no status de aprovação do laudo local.\n2.";
+
+                criteriaForAi = `${context.criteriaText}
+
+--- ⚠️ INSTRUÇÃO IMPORTANTE: TRIAGEM AUTOMÁTICA PRÉVIA ⚠️ ---
+O sistema de auditoria local (script) já validou alguns documentos cruciais. Segue o laudo técnico:
+
+${authReport}
+
+INSTRUÇÕES PARA A IA NESTA FASE COMPLEMENTAR:
+${optimizedInstruction} UTILIZE AS INFORMAÇÕES EXTRAÍDAS NO LAUDO ACIMA (ex: número do CNPJ) para CRUZAR com os demais documentos.`;
+            }
+
+            // 2. Run AI Analysis
+            const aiData = await runDocumentAudit(
+                context.regulationText,
+                context.formTemplateText,
+                context.miscFilesText,
+                criteriaForAi,
+                filesForAi,
+                [], // Do not send auth rules to AI anymore
+                abortController.signal,
+                (streamedText) => {
+                    setCandidates(prev => prev.map(c => 
+                        c.slotId === slotId ? { ...c, partialStream: streamedText } : c
+                    ));
+                },
+                isOtimizada ? context.promptModules?.filter(m => m.isActive) : undefined,
+                isOtimizada,
+                appSettings.extractTextLocal,
+                appSettings.maxAiRetries
+            );
+            
+            result = aiData.result;
+            promptText = aiData.promptText;
+
+            // Append deterministic auth report to the final summary if it was run
+            if (authReport) {
+                result.summary = authReport + "\n\n--- ANÁLISE COMPLEMENTAR DA IA ---\n\n" + result.summary;
+            }
+            setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'DONE' } : c));
+        }
+
+        // Save prompt centrally
+        const promptId = await savePrompt(promptText);
+
+        // Save immediately to DB
+        const savedReport = await saveReport(context.editalTitle, result, promptId || undefined, documentHash);
+
+        // Update Slot
+        setCandidates(prev => prev.map(c => {
+            if (c.slotId === slotId) {
+                return {
+                    ...c,
+                    id: savedReport ? savedReport.id : c.id,
+                    status: 'completed',
+                    result: result,
+                    candidateName: result.candidateName || "Candidato Identificado"
+                };
+            }
+            return c;
+        }));
+
+      } catch (err: any) {
+          if (err.message === "AbortError") {
+              setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, status: 'pending' } : c));
+              return;
+          }
+          setCandidates(prev => prev.map(c => {
+            if (c.slotId === slotId) {
+                return { ...c, status: 'error', error: err.message };
+            }
+            return c;
+          }));
+      } finally {
+          delete abortControllersRef.current[slotId];
+      }
+  };

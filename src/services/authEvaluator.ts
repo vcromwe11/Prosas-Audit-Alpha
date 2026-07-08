@@ -1,5 +1,7 @@
+import { RULE_TEMPLATES } from "./ruleTemplates";
 import { DocumentAuthRule } from '../types';
 import { extractTextFromPdf } from './pdfService';
+import { isValidCNPJ, isValidCPF } from '../utils/idValidator';
 
 export interface AuthEvaluationResult {
     passed: boolean;
@@ -8,21 +10,69 @@ export interface AuthEvaluationResult {
 }
 
 // --- Helper Functions ---
+
 const parseDate = (str: string) => {
     if (!str || str === 'N/A') return new Date(0);
     const parts = str.split('/');
     if (parts.length === 3) {
         return new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
     }
+    const isoParts = str.split('-');
+    if (isoParts.length === 3) {
+        // Handle YYYY-MM-DD locally to avoid UTC midnight shift
+        return new Date(parseInt(isoParts[0]), parseInt(isoParts[1]) - 1, parseInt(isoParts[2].substring(0, 2)));
+    }
     return new Date(str);
 };
 
-const isWithinThreeMonths = (dateStr: string, refDateStr: string) => {
+const isWithinMonths = (dateStr: string, refDateStr: string, months: number = 3) => {
     const date = parseDate(dateStr);
     const refDate = refDateStr ? parseDate(refDateStr) : new Date();
     const diffTime = refDate.getTime() - date.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays <= 90;
+    return diffDays <= (months * 30);
+};
+
+const getAgeInYears = (dateStr: string, refDateStr: string) => {
+    const date = parseDate(dateStr);
+    const refDate = refDateStr ? parseDate(refDateStr) : new Date();
+    if (date.getTime() === 0) return 0;
+    let age = refDate.getFullYear() - date.getFullYear();
+    const m = refDate.getMonth() - date.getMonth();
+    if (m < 0 || (m === 0 && refDate.getDate() < date.getDate())) {
+        age--;
+    }
+    return age;
+};
+
+// Evaluator that avoids eval/new Function
+const safeEvaluate = (config: any, extractedValue: string, referenceDate: string, openingDate: string): boolean => {
+    if (!config || typeof config !== 'object') return false;
+    
+    const valueStr = extractedValue ? extractedValue.trim() : '';
+    
+    if (config.type === "AND" && Array.isArray(config.rules)) {
+        return config.rules.every((r: any) => safeEvaluate(r, valueStr, referenceDate, openingDate));
+    }
+    if (config.type === "OR" && Array.isArray(config.rules)) {
+        return config.rules.some((r: any) => safeEvaluate(r, valueStr, referenceDate, openingDate));
+    }
+    if (config.type === "VALID_TO") {
+        return isValidTo(valueStr, referenceDate);
+    }
+    if (config.type === "WITHIN_MONTHS") {
+        return isWithinMonths(valueStr, referenceDate, config.months || 3);
+    }
+    if (config.type === "MIN_AGE_YEARS") {
+        return getAgeInYears(openingDate, referenceDate) >= (config.years || 0);
+    }
+    if (config.type === "CONTAINS") {
+        return valueStr.toLowerCase().includes((config.text || "").toLowerCase());
+    }
+    if (config.type === "NOT_CONTAINS") {
+        return !valueStr.toLowerCase().includes((config.text || "").toLowerCase());
+    }
+    return false;
 };
 
 const isValidTo = (dateStr: string, refDateStr: string) => {
@@ -41,7 +91,14 @@ const extractRegex = (text: string, regexStr: string | RegExp): string | null =>
 };
 
 const extractCnpj = (text: string): string | null => {
+    const labelMatch = text.match(/CNPJ[^\d]*(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/i);
+    if (labelMatch) return labelMatch[1];
     const match = text.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/);
+    return match ? match[0] : null;
+};
+
+const extractCpf = (text: string): string | null => {
+    const match = text.match(/\d{3}\.\d{3}\.\d{3}-\d{2}/);
     return match ? match[0] : null;
 };
 
@@ -54,7 +111,7 @@ const hasValidCndStatus = (text: string): { isValid: boolean, status: string } =
     if (upperText.includes("CERTIDÃO NEGATIVA") || upperText.includes("NÃO CONSTA") || upperText.includes("INEXISTÊNCIA DE DÉBITOS")) {
         return { isValid: true, status: "NEGATIVA" };
     }
-    if (upperText.includes("REGULARIDADE")) {
+    if (upperText.includes("REGULARIDADE") && !upperText.includes("IRREGULARIDADE")) {
         // More specific to FGTS / CRF but good to have
         return { isValid: true, status: "REGULAR" };
     }
@@ -108,6 +165,21 @@ export const runDeterministicAuth = async (
             
             // Extract CNPJ from the document for cross-validation
             const documentCnpj = extractCnpj(text);
+            const documentCpf = extractCpf(text);
+
+            if (documentCnpj && !isValidCNPJ(documentCnpj)) {
+                passed = false;
+                reportLines.push(`❌ ${docLabel} Reprovado na validação do documento.`);
+                reportLines.push(`   Justificativa: CNPJ encontrado no documento não é um número válido (dígitos verificadores incorretos).`);
+                continue;
+            }
+
+            if (documentCpf && !isValidCPF(documentCpf)) {
+                passed = false;
+                reportLines.push(`❌ ${docLabel} Reprovado na validação do documento.`);
+                reportLines.push(`   Justificativa: CPF encontrado no documento não é um número válido (dígitos verificadores incorretos).`);
+                continue;
+            }
 
             // ==========================================
             // SPECIALIZED VALIDATIONS BY DOCUMENT TYPE
@@ -173,7 +245,8 @@ export const runDeterministicAuth = async (
                 let statusFound = 'REGULAR / NÃO AVALIADO';
                 
                 if (docType.includes('fgts')) {
-                     const hasRegularity = text.toUpperCase().includes('REGULARIDADE');
+                     const upperText = text.toUpperCase();
+                     const hasRegularity = upperText.includes('REGULARIDADE') && !upperText.includes('IRREGULARIDADE');
                      isStatusOk = hasRegularity;
                      statusFound = hasRegularity ? 'SITUAÇÃO REGULAR DO FGTS' : 'SITUAÇÃO IRREGULAR';
                 } else {
@@ -224,41 +297,20 @@ export const runDeterministicAuth = async (
 
             let isValid = false;
             try {
-                const evaluator = new Function('value', 'referenceDate', 'openingDate', `
-                    function parseDate(str) {
-                        if (!str || str === 'N/A') return new Date(0);
-                        const parts = str.split('/');
-                        if (parts.length === 3) return new Date(parts[2], parts[1] - 1, parts[0]);
-                        return new Date(str);
+                let config: any;
+                try {
+                    config = JSON.parse(rule.validationRule);
+                } catch (e) {
+                    console.warn(`Regra em formato antigo (código livre) detectada para ${rule.documentType}. Isso apresenta risco de segurança. Caindo para regra padrão.`);
+                    const template = RULE_TEMPLATES.find(t => rule.documentType.toLowerCase().includes(t.name.toLowerCase()) || t.name.toLowerCase().includes(rule.documentType.toLowerCase()));
+                    if (template) {
+                        config = JSON.parse(template.rule.validationRule);
+                    } else {
+                        config = { type: "VALID_TO" }; // ultimate fallback
                     }
-                    function isWithinThreeMonths(dateStr, refDateStr) {
-                        const date = parseDate(dateStr);
-                        const refDate = refDateStr ? parseDate(refDateStr) : new Date();
-                        const diffTime = refDate.getTime() - date.getTime();
-                        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-                        return diffDays <= 90;
-                    }
-                    function isValidTo(dateStr, refDateStr) {
-                        const date = parseDate(dateStr);
-                        const refDate = refDateStr ? parseDate(refDateStr) : new Date();
-                        date.setHours(0,0,0,0);
-                        refDate.setHours(0,0,0,0);
-                        return date >= refDate;
-                    }
-                    function getAgeInYears(dateStr, refDateStr) {
-                        const date = parseDate(dateStr);
-                        const refDate = refDateStr ? parseDate(refDateStr) : new Date();
-                        if (date.getTime() === 0) return 0;
-                        let age = refDate.getFullYear() - date.getFullYear();
-                        const m = refDate.getMonth() - date.getMonth();
-                        if (m < 0 || (m === 0 && refDate.getDate() < date.getDate())) {
-                            age--;
-                        }
-                        return age;
-                    }
-                    return ${rule.validationRule};
-                `);
-                isValid = evaluator(extractedValue.trim(), referenceDate, genericOpeningDate);
+                }
+                
+                isValid = safeEvaluate(config, extractedValue.trim(), referenceDate, genericOpeningDate);
             } catch (evalError) {
                 console.error(`Erro ao avaliar regra para ${rule.documentType}:`, evalError);
                 passed = false;
@@ -273,7 +325,7 @@ export const runDeterministicAuth = async (
                 reportLines.push(`   Justificativa: O valor extraído ("${extractedValue.trim()}") atende ao padrão esperado e à regra de validação em relação à data de referência.`);
             } else {
                 passed = false;
-                const isDateRule = rule.validationRule.includes('isWithinThreeMonths') || rule.validationRule.includes('isValidTo');
+                const isDateRule = rule.validationRule.includes('WITHIN_MONTHS') || rule.validationRule.includes('VALID_TO') || rule.validationRule.includes('isWithinThreeMonths') || rule.validationRule.includes('isValidTo');
                 const label = isDateRule ? '⚠️ PONTO DE ATENÇÃO' : '❌ Reprovado';
                 reportLines.push(`${label}: ${docLabel} Falha na validação.`);
                 reportLines.push(`   Justificativa: O valor extraído ("${extractedValue.trim()}") foi barrado pela regra ("${rule.validationRule}").`);

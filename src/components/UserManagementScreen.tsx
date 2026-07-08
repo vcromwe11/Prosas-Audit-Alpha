@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserProfile } from '../types';
-import { subscribeToUsers, updateUserRole, adminCreateUser, updateUserProfile, deleteUserProfile } from '../services/storageService';
+import { subscribeToUsers, updateUserRole, adminCreateUser, updateUserProfile, deleteUserProfile, fetchAllTemporaryPasswords } from '../services/storageService';
 import { useAuth } from '../contexts/AuthContext';
 
 const UserManagementScreen: React.FC = () => {
@@ -38,6 +38,7 @@ const UserManagementScreen: React.FC = () => {
 
     // Delete confirmation state
     const [userToDelete, setUserToDelete] = useState<UserProfile | null>(null);
+    const [userCredentials, setUserCredentials] = useState<Record<string, string>>({});
 
     useEffect(() => {
         const unsubscribe = subscribeToUsers((fetchedUsers) => {
@@ -46,6 +47,15 @@ const UserManagementScreen: React.FC = () => {
         });
         return () => unsubscribe();
     }, []);
+
+    useEffect(() => {
+        if (!users.length || !isAdmin) return;
+        const fetchCreds = async () => {
+            const creds = await fetchAllTemporaryPasswords(users.map(u => u.uid));
+            setUserCredentials(creds);
+        };
+        fetchCreds();
+    }, [users, isAdmin]);
 
     const handleRoleChange = async (uid: string, newRole: 'admin' | 'analyst' | 'viewer') => {
         if (!isAdmin) return;
@@ -67,6 +77,7 @@ const UserManagementScreen: React.FC = () => {
         if (newPass && newPass.trim() && newPass.length >= 6) {
             setUpdatingUserId(uid);
             await updateUserProfile(uid, { temporaryPassword: newPass.trim() });
+            setUserCredentials(prev => ({ ...prev, [uid]: newPass.trim() }));
             setUpdatingUserId(null);
         } else if (newPass) {
             alert('A senha deve ter pelo menos 6 caracteres.');
@@ -126,7 +137,7 @@ const UserManagementScreen: React.FC = () => {
         setEditJobFunction(user.jobFunction || '');
         setEditState(user.state || '');
         setEditRole(user.role);
-        setEditTempPass(user.temporaryPassword || '');
+        setEditTempPass(userCredentials[user.uid] || '');
         setEditError('');
     };
 
@@ -144,7 +155,7 @@ const UserManagementScreen: React.FC = () => {
         setIsSavingEdit(true);
 
         try {
-            const updates: Partial<UserProfile> = {
+            const updates: Partial<UserProfile> & { temporaryPassword?: string } = {
                 name: editName,
                 company: editCompany,
                 jobFunction: editJobFunction,
@@ -157,7 +168,7 @@ const UserManagementScreen: React.FC = () => {
                 updates.role = editRole;
             }
 
-            await updateUserProfile(userToEdit.uid, updates);
+            await updateUserProfile(userToEdit.uid, updates); if (editTempPass) { setUserCredentials(prev => ({ ...prev, [userToEdit.uid]: editTempPass })); } else if (editTempPass === "") { setUserCredentials(prev => { const next = { ...prev }; delete next[userToEdit.uid]; return next; }); }
             setUserToEdit(null);
         } catch (error: any) {
             setEditError('Erro ao atualizar usuário: ' + (error.message || error));
@@ -257,11 +268,11 @@ const UserManagementScreen: React.FC = () => {
                                             </td>
                                             <td className="py-4 px-4 align-top text-right">
                                                 {(isAdmin || isSelf) ? (
-                                                    user.temporaryPassword ? (
+                                                    userCredentials[user.uid] ? (
                                                         <div className="flex flex-col items-end gap-2">
                                                             <div className="flex items-center gap-2 bg-gray-100 dark:bg-gray-800 px-3 py-1.5 rounded border border-gray-200 dark:border-gray-600">
                                                                 <span className="font-mono text-sm text-gray-800 dark:text-gray-200 min-w-[80px] text-center">
-                                                                    {visiblePasswords[user.uid] ? user.temporaryPassword : '••••••••'}
+                                                                    {visiblePasswords[user.uid] ? userCredentials[user.uid] : '••••••••'}
                                                                 </span>
                                                                 <button 
                                                                     onClick={() => togglePasswordVisibility(user.uid)}

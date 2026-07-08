@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from 'motion/react';
 import { PROMPTS } from '../prompts';
 import { GlobalPrompt, UserProfile, AppStage } from '../types';
 import { subscribeToGlobalPrompts, updateGlobalPrompt, updateUserProfile } from '../services/storageService';
-import { useAnalysis } from '../contexts/AnalysisContext';
 import UserManagementScreen from './UserManagementScreen';
 import { useAuthGuard } from '../hooks/useAuthGuard';
 
@@ -513,48 +512,48 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                                     icon: 'fas fa-plus-circle',
                                     iconClass: 'bg-blue-100 dark:bg-blue-900/30 text-prosas-blue',
                                     title: 'Nova Análise (Motor de IA)',
-                                    shortDesc: 'Extração automática de requisitos, cronograma e contrapartidas através da leitura de manuais e editais em PDF.',
-                                    longDesc: 'O Motor de IA é o núcleo analítico do sistema. Com acesso central a arquivos (e integração com a nuvem), a IA lê o PDF integralmente e localiza seções-chave. A principal utilidade disso é a velocidade: em segundos você terá listado num formato de checklist o que sua instituição precisa providenciar de documentação e até que data, eliminando o dia inteiro lendo um documento espesso de 60 páginas.'
+                                    shortDesc: 'Processamento inteligente de editais. Extrai requisitos e analisa elegibilidade operando em dois modos distintos (IA Completa ou IA Otimizada).',
+                                    longDesc: 'O Motor de IA é o coração analítico do sistema, desenvolvido com as capacidades da API Gemini, possuindo dois fluxos principais. A "IA Completa" (Padrão) realiza uma leitura exaustiva de todos os arquivos fornecidos contrapostos a todos os documentos dos proponentes, executando primeiro um módulo de validação determinística antes de submeter o pacote de textos (extraídos via OCR ou processados em base) ao modelo de linguagem. O modelo então emite um parecer holístico. Alternativamente, a "IA Otimizada" (BETA) foca em eficiência e economia de tokens. Em vez de regras globais, utiliza "Módulos de Documento" (Prompt Modules) altamente específicos. A IA atua como um classificador inicial, mapeando cada arquivo recebido para um módulo e descartando arquivos não reconhecidos, para em seguida avaliá-los apenas contra suas regras específicas, o que mitiga alucinações onde o modelo cruza regras de documentos diferentes.'
                                 },
                                 {
                                     id: 'drive',
                                     icon: 'fab fa-google-drive',
                                     iconClass: 'bg-green-100 dark:bg-green-900/30 text-green-600',
                                     title: 'Integração Google Drive',
-                                    shortDesc: 'Conecta e busca recursos na nuvem do Google de forma protegida para leitura da IA.',
-                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                    shortDesc: 'Módulo de conexão nativa OAuth2 que permite o acesso seguro e direto aos arquivos e pastas do Google Workspace.',
+                                    longDesc: 'Permite aos analistas selecionar rapidamente pastas inteiras ou documentos isolados (PDF, DOCX, TXT) diretamente do Google Workspace da instituição. Através da API de integração, os arquivos selecionados são lidos e processados pelo motor de extração embutido na aplicação ou submetidos diretamente à API da Gemini. Não há armazenamento redundante permanente dos arquivos inteiros do Drive no banco de dados, garantindo privacidade e conformidade em processos sensíveis.'
                                 },
                                 {
                                     id: 'repo',
                                     icon: 'fas fa-folder-open',
                                     iconClass: 'bg-purple-100 dark:bg-purple-900/30 text-purple-600',
-                                    title: 'Repositório em Nuvem',
-                                    shortDesc: 'Gerenciador de arquivos completo. Criação de pastas em sub-níveis, visualização de documentos e movimentação simplificada.',
-                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                    title: 'Base de Relatórios (Repositório)',
+                                    shortDesc: 'Biblioteca imutável baseada no Firebase Firestore que consolida a gestão de conhecimento e os pareceres gerados.',
+                                    longDesc: 'Funciona como um registro imutável dos relatórios, auditorias e pareceres gerados pela IA. O sistema armazena a estrutura JSON completa das avaliações no Firebase Firestore, garantindo persistência duradoura. Cada análise salva contém metadados vitais, identificadores dinâmicos do projeto, o status de elegibilidade final e a justificativa exata. Este repositório não é apenas um sistema de arquivos, mas organiza metadados complexos, garantindo a rastreabilidade e a transparência do raciocínio da IA para a formação de uma base de conhecimento institucional.'
                                 },
                                 {
                                     id: 'ideas',
                                     icon: 'fas fa-lightbulb',
                                     iconClass: 'bg-amber-100 dark:bg-amber-900/30 text-amber-600',
                                     title: 'Ideias e Notas',
-                                    shortDesc: 'Caderno de rascunhos digital para prototipar ideias, fazer avaliações pontuais e armazenar blocos de texto formatado.',
-                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                    shortDesc: 'Ambiente de anotações (scratchpad) com suporte a Markdown para documentar nuances interpretativas e rascunhar respostas.',
+                                    longDesc: 'Atua como um sistema de gerenciamento de conhecimento tácito local. Auditores podem utilizar esta ferramenta para documentar interpretações complexas de editais ambíguos, armazenar blocos de texto formatado, e rascunhar templates de avaliação. A persistência é gerenciada na nuvem. Estas anotações frequentemente servem como a "semente" ou o rascunho de regras de negócio que eventualmente serão transformadas e cadastradas como Módulos de Prompt na configuração da IA Otimizada.'
                                 },
                                 {
                                     id: 'dashboard',
                                     icon: 'fas fa-chart-pie',
                                     iconClass: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600',
                                     title: 'Dashboard & Busca',
-                                    shortDesc: 'Uma visão gerencial do funil de aprovação com buscas textuais precisas que varrem toda a base histórica do sistema.',
-                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                    shortDesc: 'Painel de controle analítico que apresenta métricas agregadas e oferece busca textual sobre o histórico de auditorias.',
+                                    longDesc: 'O painel de inteligência de negócios (BI) consolida as saídas da IA em métricas agregadas, como a taxa de aprovação ou reprovação global. O recurso de maior destaque é o motor de busca (Full-Text Search) que varre todo o histórico imutável de relatórios. Ele permite que supervisores ou coordenadores filtrem rapidamente todas as propostas, provendo insights em tempo real e agilizando a recuperação de casos de uso passados para sustentar decisões futuras.'
                                 },
                                 {
                                     id: 'admin',
                                     icon: 'fas fa-users-cog',
                                     iconClass: 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300',
-                                    title: 'Administração de Sistema',
-                                    shortDesc: 'Controle seguro de usuários autorizados e regras globais, moldando a IA de acordo com os critérios institucionais.',
-                                    longDesc: 'Em breve um detalhamento oficial será disponibilizado.'
+                                    title: 'Administração & Modelos',
+                                    shortDesc: 'Centro de governança que permite configurar o modelo da Gemini (Pro vs Flash), injeção de personas e gerenciar segurança.',
+                                    longDesc: 'O centro de governança do aplicativo. Contém configurações fundamentais, como a capacidade de alternar o motor de IA entre Gemini 1.5 Pro e Flash. Gerencia também as regras Honeypot — um filtro anti-alucinação e anti-jailbreak onde o administrador insere termos proibitivos para barrar execuções de prompts indesejados. É aqui também que o System Prompt (diretrizes comportamentais e de persona) e a gestão de chaves de API e de usuários autorizados do sistema podem ser definidos, ditando o tom e a arquitetura operacional da ferramenta.'
                                 }
                             ].map((feature) => {
                                 const isExpanded = expandedFeature === feature.id;

@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { subscribeToRepositoryFolders, subscribeToRepositoryFilesAll } from '../services/storageService';
 import { RepositoryFile, RepositoryFolder } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 export const RepositoryPickerDialog: React.FC<{
   isOpen: boolean;
   onClose: () => void;
   onSelect: (files: RepositoryFile[]) => void;
 }> = ({ isOpen, onClose, onSelect }) => {
+  const { user } = useAuth();
   const [folders, setFolders] = useState<RepositoryFolder[]>([]);
   const [files, setFiles] = useState<RepositoryFile[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -14,11 +16,12 @@ export const RepositoryPickerDialog: React.FC<{
   const [selectedFolder, setSelectedFolder] = useState<RepositoryFolder | null>(null);
 
   useEffect(() => {
-    if (!isOpen) return;
-    const unsubFolders = subscribeToRepositoryFolders(setFolders);
-    const unsubFiles = subscribeToRepositoryFilesAll(setFiles);
+    if (!isOpen || !user) return;
+    const isAdmin = user.role === 'admin' || user.role === 'developer';
+    const unsubFolders = subscribeToRepositoryFolders(isAdmin, user.uid, setFolders);
+    const unsubFiles = subscribeToRepositoryFilesAll(isAdmin, user.uid, setFiles);
     return () => { unsubFolders(); unsubFiles(); };
-  }, [isOpen]);
+  }, [isOpen, user]);
 
   if (!isOpen) return null;
 

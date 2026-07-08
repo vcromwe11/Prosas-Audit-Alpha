@@ -14,8 +14,51 @@ const getAiModel = () => {
     return 'gemini-2.5-flash'; // Fallback
 };
 
+export const executeWithRetry = async <T>(
+    operation: () => Promise<T>,
+    retries = 3,
+    baseDelay = 8000,
+    signal?: AbortSignal
+): Promise<T> => {
+    for (let i = 0; i < retries; i++) {
+        if (signal?.aborted) throw new Error("AbortError");
+        try {
+            return await operation();
+        } catch (error: any) {
+            if (error.message === "AbortError") throw error;
+            
+            let status = error.status || error.response?.status;
+            let errorMessage = error.message || JSON.stringify(error);
+            if (errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("429")) {
+                status = 429;
+            }
+            const isRateLimit = status === 429;
+            const isServerOverload = status === 503;
+            
+            if ((isRateLimit || isServerOverload) && i < retries - 1) {
+                const waitTime = baseDelay * Math.pow(2, i) + Math.random() * 2000;
+                console.warn(`Erro ${status || '429'} (Tentativa ${i + 1}/${retries}). Aguardando ${(waitTime/1000).toFixed(1)}s...`);
+                
+                await new Promise<void>((resolve, reject) => {
+                    const timeout = setTimeout(resolve, waitTime);
+                    if (signal) {
+                        signal.addEventListener('abort', () => {
+                            clearTimeout(timeout);
+                            reject(new Error("AbortError"));
+                        });
+                    }
+                });
+                continue;
+            }
+            
+            throw error;
+        }
+    }
+    throw new Error("Falha na API após múltiplas tentativas.");
+};
+
 export const callGeminiWithRetry = async (
-    ai: GoogleGenAI,
+    ai: any,
     options: {
         model: string;
         contents: any;
@@ -24,25 +67,7 @@ export const callGeminiWithRetry = async (
     retries = 5,
     baseDelay = 10000
 ): Promise<any> => {
-    for (let i = 0; i < retries; i++) {
-        try {
-            return await ai.models.generateContent(options);
-        } catch (error: any) {
-            const errorMessage = error.message || JSON.stringify(error);
-            const status = error.status || error.response?.status;
-            const isRateLimit = errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("429") || status === 429;
-            const isServerOverload = status === 503 || errorMessage.includes("503");
-            
-            if ((isRateLimit || isServerOverload) && i < retries - 1) {
-                const waitTime = baseDelay * Math.pow(1.5, i) + Math.random() * 2000;
-                console.warn(`Gemini API rate limit or overload (${status || '429'}). Retrying in ${(waitTime/1000).toFixed(1)}s... (Tentativa ${i + 1}/${retries})`);
-                await new Promise(resolve => setTimeout(resolve, waitTime));
-                continue;
-            }
-            throw error;
-        }
-    }
-    throw new Error("Falha na API Gemini após múltiplas tentativas.");
+    return executeWithRetry(() => ai.models.generateContent(options), retries, baseDelay);
 };
 
 import { DEFAULT_DOCUMENT_CRITERIA } from "../constants";
@@ -241,7 +266,12 @@ export const runDocumentAudit = async (
 
     // CACHE LOGIC
     const fullPromptText = `INSTRUÇÕES DO SISTEMA:\n${systemInstructionText}\n\nPROMPT DO USUÁRIO:\n${userTaskPromptText}`;
-    const cacheData = fullPromptText + JSON.stringify(parts);
+    const activeModulesStr = JSON.stringify((promptModules || []).filter(m => m.isActive).map(m => ({
+        id: m.id,
+        title: m.documentType,
+        instructions: m.promptInstructions
+    })));
+    const cacheData = fullPromptText + JSON.stringify(parts) + "|" + (isOtimizada ? "otimizada" : "completa") + "|" + activeModulesStr;
     const cacheKey = await generateCacheKey(cacheData);
     
     const cachedResult = await getCachedAudit(cacheKey);
@@ -459,7 +489,7 @@ Retorne EXCLUSIVAMENTE um JSON neste formato:
  * Lógica de Retry Otimizada com Streaming
  */
 const generateContentWithSmartRetry = async (
-    ai: GoogleGenAI, 
+    ai: any, 
     model: string, 
     parts: any[], 
     systemInstruction: string,
@@ -470,9 +500,8 @@ const generateContentWithSmartRetry = async (
 ): Promise<string> => {
     let lastPartialText = "";
     
-    for (let i = 0; i < retries; i++) {
-        if (signal?.aborted) throw new Error("AbortError");
-        try {
+    try {
+        return await executeWithRetry(async () => {
             if (onProgress) {
                 const streamPromise = async () => {
                     lastPartialText = "";
@@ -495,13 +524,11 @@ const generateContentWithSmartRetry = async (
                     }
                     return lastPartialText;
                 };
-
                 const abortPromise = new Promise<never>((_, reject) => {
                     if (signal) {
                         signal.addEventListener('abort', () => reject(new Error("AbortError")));
                     }
                 });
-
                 return await Promise.race([streamPromise(), abortPromise]);
             } else {
                 const generatePromise = ai.models.generateContent({
@@ -519,71 +546,43 @@ const generateContentWithSmartRetry = async (
                         signal.addEventListener('abort', () => reject(new Error("AbortError")));
                     }
                 });
-
                 const response = await Promise.race([generatePromise, abortPromise]) as any;
                 return response.text || "";
             }
-        } catch (error: any) {
-            if (error.message === "AbortError") throw error;
-            
-            let status = error.status || error.response?.status;
-            let errorMessage = error.message || JSON.stringify(error);
-
-            if (errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("429")) {
-                status = 429;
-            }
-
-            const isRateLimit = status === 429;
-            const isServerOverload = status === 503;
-            
-            if ((isRateLimit || isServerOverload) && i < retries - 1) {
-                const waitTime = baseDelay * Math.pow(2, i);
-                console.warn(`Erro ${status} (Tentativa ${i + 1}/${retries}). Aguardando ${waitTime/1000}s...`);
-                
-                await new Promise<void>((resolve, reject) => {
-                    const timeout = setTimeout(resolve, waitTime);
-                    if (signal) {
-                        signal.addEventListener('abort', () => {
-                            clearTimeout(timeout);
-                            reject(new Error("AbortError"));
-                        });
-                    }
-                });
-                continue;
-            }
-
-            console.error("Erro fatal na API Gemini:", error);
-            
-            // If it's the last retry and we have partial text, throw a special error
-            if (i === retries - 1 && lastPartialText) {
-                const partialError = new Error(`Interrupção na Análise: ${errorMessage}`);
-                (partialError as any).partialText = lastPartialText;
-                throw partialError;
-            }
-
-            if (isRateLimit) {
-                throw new Error("Cota de uso da IA excedida (Erro 429). O modelo Pro tem limites mais estritos no plano gratuito. Aguarde alguns minutos.");
-            }
-            if (errorMessage.includes("400")) {
-                throw new Error("Erro nos arquivos enviados (Bad Request). Verifique se os PDFs são válidos.");
-            }
-            if (errorMessage.startsWith('{') && errorMessage.includes('"message":')) {
-                try {
-                    const parsed = JSON.parse(errorMessage);
-                    throw new Error(parsed.error?.message || "Erro desconhecido na API.");
-                } catch (e) {
-                    throw new Error("Erro técnico na comunicação com a IA.");
-                }
-            }
-            
-            if (lastPartialText) {
-                 const partialError = new Error(`Interrupção na Análise: ${errorMessage}`);
-                 (partialError as any).partialText = lastPartialText;
-                 throw partialError;
-            }
-            
-            throw error; 
+        }, retries, baseDelay, signal);
+    } catch (error: any) {
+        if (error.message === "AbortError") throw error;
+        
+        let status = error.status || error.response?.status;
+        let errorMessage = error.message || JSON.stringify(error);
+        if (errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("429")) {
+            status = 429;
         }
+        const isRateLimit = status === 429;
+        
+        console.error("Erro fatal na API Gemini:", error);
+        
+        if (isRateLimit) {
+            throw new Error("Cota de uso da IA excedida. Aguarde alguns minutos e tente novamente.");
+        }
+        if (errorMessage.includes("400")) {
+            throw new Error("Erro nos arquivos enviados (Bad Request). Verifique se os PDFs são válidos.");
+        }
+        if (errorMessage.startsWith('{') && errorMessage.includes('"message":')) {
+            try {
+                const parsed = JSON.parse(errorMessage);
+                throw new Error(parsed.error?.message || "Erro desconhecido na API.");
+            } catch (e) {
+                throw new Error("Erro técnico na comunicação com a IA.");
+            }
+        }
+        
+        if (lastPartialText) {
+             const partialError = new Error(`Interrupção na Análise: ${errorMessage}`);
+             (partialError as any).partialText = lastPartialText;
+             throw partialError;
+        }
+        
+        throw error;
     }
-    throw new Error("O servidor da IA está muito ocupado no momento. Tente novamente em 2 minutos.");
 };

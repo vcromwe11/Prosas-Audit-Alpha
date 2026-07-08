@@ -2,6 +2,7 @@ import React from 'react';
 import { motion } from 'motion/react';
 import { SavedReport, AppStage } from '../types';
 import { getEditalSettings, updateReport } from '../services/storageService';
+import { verifyIdAvailability } from '../utils/idValidator';
 
 interface DashboardScreenProps {
   onUpdateReport?: (report: SavedReport) => void;
@@ -34,7 +35,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 }) => {
   const allReports = selectedDashboardEdital ? (groupedReports[selectedDashboardEdital] || []) : Object.values(groupedReports).flat();
 
-  const [sortKey, setSortKey] = React.useState<'candidateName' | 'editalName' | 'timestamp' | 'status' | 'default'>('default');
+  const [sortKey, setSortKey] = React.useState<'candidateName' | 'editalName' | 'timestamp' | 'status' | 'editalId' | 'propostaId' | 'default'>('default');
   const [sortOrder, setSortOrder] = React.useState<'asc' | 'desc' | 'default'>('default');
   const [currentSettings, setCurrentSettings] = React.useState<any>(null);
   
@@ -44,36 +45,69 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
   const handleSaveIds = (report: SavedReport) => {
       if (onUpdateReport) {
-          // Check for duplicate Proposta ID (across all reports)
-          if (editPropostaId && editPropostaId.trim() !== '') {
-              const isDuplicate = allReports.some(r => r.id !== report.id && r.propostaId === editPropostaId);
-              if (isDuplicate) {
-                  alert("Este ID de Proposta já está sendo usado por outro projeto. Os IDs devem ser únicos.");
-                  return;
+          let finalPropostaId = editPropostaId;
+          let finalEditalId = editEditalId;
+          const globalAllReports = Object.values(groupedReports).flat() as SavedReport[];
+
+          // Check for duplicate Proposta ID using our utility function
+          if (finalPropostaId && finalPropostaId.trim() !== '') {
+              const { isAvailable, nextSuggestedId } = verifyIdAvailability(
+                  'proposta',
+                  finalPropostaId,
+                  report.id,
+                  report.editalName,
+                  globalAllReports
+              );
+              if (!isAvailable) {
+                  if (window.confirm(`Este ID de Proposta (${finalPropostaId}) já está sendo usado por outro projeto. Deseja usar o próximo ID sequencial disponível (${nextSuggestedId})?`)) {
+                      finalPropostaId = nextSuggestedId;
+                  } else {
+                      return;
+                  }
+              }
+          }
+
+          // Check for duplicate Edital ID using our utility function
+          if (finalEditalId && finalEditalId.trim() !== '') {
+              const { isAvailable, nextSuggestedId } = verifyIdAvailability(
+                  'edital',
+                  finalEditalId,
+                  report.id,
+                  report.editalName,
+                  globalAllReports
+              );
+              if (!isAvailable) {
+                  if (window.confirm(`Este ID de Edital (${finalEditalId}) já está sendo usado por outro edital. Deseja usar o próximo ID sequencial disponível (${nextSuggestedId})?`)) {
+                      finalEditalId = nextSuggestedId;
+                  } else {
+                      return;
+                  }
               }
           }
 
           // If the edital ID changed, update all reports for this edital
-          if (editEditalId !== report.editalId) {
-              const reportsInEdital = allReports.filter(r => r.editalName === report.editalName);
+          if (finalEditalId !== report.editalId) {
+              const reportsInEdital = globalAllReports.filter(r => r.editalName === report.editalName);
               reportsInEdital.forEach(r => {
                   if (r.id === report.id) {
-                      onUpdateReport({ ...r, editalId: editEditalId, propostaId: editPropostaId });
-                  } else if (r.editalId !== editEditalId) {
-                      onUpdateReport({ ...r, editalId: editEditalId });
+                      onUpdateReport({ ...r, editalId: finalEditalId, propostaId: finalPropostaId });
+                  } else {
+                      onUpdateReport({ ...r, editalId: finalEditalId });
                   }
               });
           } else {
               onUpdateReport({
                   ...report,
-                  editalId: editEditalId,
-                  propostaId: editPropostaId
+                  editalId: finalEditalId,
+                  propostaId: finalPropostaId
               });
           }
       }
       setEditingId(null);
   };
   
+
+
   React.useEffect(() => {
       let isMounted = true;
       if (selectedDashboardEdital) {
@@ -86,7 +120,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
       return () => { isMounted = false; };
   }, [selectedDashboardEdital]);
 
-  const handleSortClick = (field: 'candidateName' | 'editalName' | 'timestamp' | 'status') => {
+  const handleSortClick = (field: 'candidateName' | 'editalName' | 'timestamp' | 'status' | 'editalId' | 'propostaId') => {
     if (sortKey === field) {
       if (sortOrder === 'asc') {
         setSortOrder('desc');
@@ -140,11 +174,27 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
           : statusB.localeCompare(statusA, 'pt', { sensitivity: 'base' });
       }
       
+      if (sortKey === 'editalId') {
+        const valA = a.editalId || '';
+        const valB = b.editalId || '';
+        return sortOrder === 'asc'
+          ? valA.localeCompare(valB, 'pt', { sensitivity: 'base' })
+          : valB.localeCompare(valA, 'pt', { sensitivity: 'base' });
+      }
+
+      if (sortKey === 'propostaId') {
+        const valA = a.propostaId || '';
+        const valB = b.propostaId || '';
+        return sortOrder === 'asc'
+          ? valA.localeCompare(valB, 'pt', { sensitivity: 'base' })
+          : valB.localeCompare(valA, 'pt', { sensitivity: 'base' });
+      }
+      
       return 0;
     });
   }, [allReports, sortKey, sortOrder]);
 
-  const renderSortIcon = (field: 'candidateName' | 'editalName' | 'timestamp' | 'status') => {
+  const renderSortIcon = (field: 'candidateName' | 'editalName' | 'timestamp' | 'status' | 'editalId' | 'propostaId') => {
     if (sortKey === field) {
       if (sortOrder === 'asc') {
         return <i className="fas fa-sort-up ml-1.5 text-prosas-blue"></i>;
@@ -214,12 +264,15 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                         </button>
                     </>
                 ) : (
+                    <>
                     <button
                         onClick={() => onNewAnalysis()}
                         className="px-4 py-2 bg-prosas-blue text-white rounded shadow text-sm font-bold hover:bg-prosas-blueDark transition-colors flex items-center gap-2"
                     >
                         <i className="fas fa-plus"></i> Nova Análise
                     </button>
+
+                    </>
                 )}
             </div>
         </div>
@@ -281,8 +334,24 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
                                 {renderSortIcon('timestamp')}
                             </div>
                         </th>
-                        <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>ID Edital</th>
-                        <th className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} text-gray-500 dark:text-gray-400`}>ID Proposta</th>
+                        <th 
+                            className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 group transition-colors duration-200 text-gray-500 dark:text-gray-400`}
+                            onClick={() => handleSortClick('editalId')}
+                        >
+                            <div className="flex items-center gap-1">
+                                <span>ID Edital</span>
+                                {renderSortIcon('editalId')}
+                            </div>
+                        </th>
+                        <th 
+                            className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 group transition-colors duration-200 text-gray-500 dark:text-gray-400`}
+                            onClick={() => handleSortClick('propostaId')}
+                        >
+                            <div className="flex items-center gap-1">
+                                <span>ID Proposta</span>
+                                {renderSortIcon('propostaId')}
+                            </div>
+                        </th>
                         <th 
                             className={`px-6 ${appSettings.compactMode ? 'py-2' : 'py-4'} cursor-pointer select-none hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-gray-100 group transition-colors duration-200`}
                             onClick={() => handleSortClick('status')}

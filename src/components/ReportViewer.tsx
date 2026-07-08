@@ -1,5 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { SavedReport, AnalysisPoint } from '../types';
 import html2pdf from 'html2pdf.js';
 import { getPrompt, getReportResult, getReportResultSync } from '../services/storageService';
@@ -95,6 +96,7 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
   const [draftNotes, setDraftNotes] = useState(report.userNotes || '');
   const [promptText, setPromptText] = useState<string | null>(null);
   const [isLoadingPrompt, setIsLoadingPrompt] = useState(false);
+  const [isDeleteEvalModalOpen, setIsDeleteEvalModalOpen] = useState(false);
 
   useEffect(() => {
     // Quando o relatório mudar, precisamos redefinir o estado.
@@ -159,7 +161,7 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
     );
   }
 
-  if (fetchError || !result || typeof result !== 'object' || !result.organizationData) {
+  if (fetchError || !result || typeof result !== 'object' || !result.organizationData || !Array.isArray(result.points)) {
     return (
       <div className="p-8 text-center text-red-500 bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-red-200 dark:border-red-900/30 max-w-2xl mx-auto mt-10">
         <i className="fas fa-exclamation-triangle text-4xl mb-4 text-red-400"></i>
@@ -193,6 +195,7 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
   };
 
   const handleDeleteEval = () => {
+    setIsDeleteEvalModalOpen(false);
     if (onUpdateReport) {
       onUpdateReport({
         ...report,
@@ -409,7 +412,7 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
                     <i className="fas fa-pen text-xs"></i>
                   </button>
                   <button 
-                    onClick={handleDeleteEval}
+                    onClick={() => setIsDeleteEvalModalOpen(true)}
                     className="w-8 h-8 rounded-full bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-600 text-gray-500 hover:text-red-500 flex items-center justify-center shadow-sm transition-colors"
                     title="Excluir Parecer"
                   >
@@ -498,6 +501,43 @@ const ReportViewer: React.FC<Props> = ({ report, onBack, onGoToDashboard, onUpda
       <div className="mt-8 text-center text-xs text-gray-400 dark:text-gray-500 print:mt-12 print:text-right">
         Relatório gerado automaticamente em {new Date(report.timestamp).toLocaleString()} • ID: {report.id}
       </div>
+
+      <AnimatePresence>
+          {isDeleteEvalModalOpen && (
+              <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                  <motion.div 
+                      initial={{ opacity: 0, scale: 0.95 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0, scale: 0.95 }}
+                      className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-sm w-full overflow-hidden"
+                  >
+                      <div className="p-6 text-center">
+                          <div className="w-16 h-16 bg-red-100 dark:bg-red-900/30 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500 text-2xl">
+                              <i className="fas fa-exclamation-triangle"></i>
+                          </div>
+                          <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">Excluir Parecer?</h3>
+                          <p className="text-gray-500 dark:text-gray-400 text-sm">
+                              Tem certeza que deseja excluir o parecer manual para <strong className="text-gray-800 dark:text-gray-200">{report.candidateName}</strong>? Esta ação não pode ser desfeita.
+                          </p>
+                      </div>
+                      <div className="bg-gray-50 dark:bg-gray-700/50 p-4 flex gap-3">
+                          <button 
+                              onClick={(e) => { e.stopPropagation(); setIsDeleteEvalModalOpen(false); }}
+                              className="flex-1 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-bold hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                          >
+                              Cancelar
+                          </button>
+                          <button 
+                              onClick={handleDeleteEval}
+                              className="flex-1 px-4 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-white font-bold transition-colors"
+                          >
+                              Excluir
+                          </button>
+                      </div>
+                  </motion.div>
+              </div>
+          )}
+      </AnimatePresence>
     </div>
   );
 };

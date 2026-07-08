@@ -21,7 +21,7 @@ service cloud.firestore {
       
       function isValidUser(data) {
         return data.keys().hasAll(['uid', 'email', 'name', 'avatarUrl', 'role'])
-          && data.keys().hasOnly(['uid', 'email', 'name', 'avatarUrl', 'displayName', 'role', 'createdAt', 'state', 'company', 'jobFunction', 'temporaryPassword', 'isPreRegistration'])
+          && data.keys().hasOnly(['uid', 'email', 'name', 'avatarUrl', 'displayName', 'role', 'createdAt', 'state', 'company', 'jobFunction', 'isPreRegistration'])
           && data.uid == userId
           && isValidString(data.email, 0, 150)
           && isValidString(data.name, 0, 150)
@@ -32,13 +32,16 @@ service cloud.firestore {
           && (!('state' in data) || isValidString(data.state, 0, 150))
           && (!('company' in data) || isValidString(data.company, 0, 150))
           && (!('jobFunction' in data) || isValidString(data.jobFunction, 0, 150))
-          && (!('temporaryPassword' in data) || isValidString(data.temporaryPassword, 0, 150))
           && (!('isPreRegistration' in data) || data.isPreRegistration is bool);
       }
       
       allow create: if ((isOwner(userId) && request.resource.data.role == 'viewer') || isAdmin()) && isValidUser(request.resource.data);
       allow update: if (isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role && request.resource.data.uid == resource.data.uid)) && isValidUser(request.resource.data);
       allow delete: if isAdmin();
+
+      match /private/{docId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
 
       // Legacy Reports subcollection - for migration
       match /reports/{reportId} {
@@ -66,7 +69,7 @@ service cloud.firestore {
       
       function isValidReport(data) {
         return data.keys().hasAll(['id', 'userId', 'editalName', 'candidateName', 'timestamp'])
-          && data.keys().hasOnly(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result', 'manualStatus', 'userNotes', 'promptId', 'evaluatedBy', 'evaluatedAt', 'overallStatus', 'documentHash'])
+          && data.keys().hasOnly(['id', 'userId', 'editalName', 'candidateName', 'cnpj', 'timestamp', 'result', 'manualStatus', 'userNotes', 'promptId', 'evaluatedBy', 'evaluatedAt', 'overallStatus', 'documentHash', 'editalId', 'propostaId'])
           && isValidString(data.id, 1, 100)
           && isValidString(data.userId, 1, 100)
           && isValidString(data.editalName, 0, 500)
@@ -81,7 +84,9 @@ service cloud.firestore {
           && (!('userNotes' in data) || data.userNotes == null || isValidString(data.userNotes, 0, 5000))
           && (!('promptId' in data) || data.promptId == null || isValidString(data.promptId, 0, 100))
           && (!('evaluatedBy' in data) || data.evaluatedBy == null || isValidString(data.evaluatedBy, 0, 150))
-          && (!('evaluatedAt' in data) || data.evaluatedAt == null || data.evaluatedAt is number);
+          && (!('evaluatedAt' in data) || data.evaluatedAt == null || data.evaluatedAt is number)
+          && (!('editalId' in data) || data.editalId == null || isValidString(data.editalId, 0, 200))
+          && (!('propostaId' in data) || data.propostaId == null || isValidString(data.propostaId, 0, 200));
       }
 
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid && isValidReport(request.resource.data);
@@ -164,15 +169,18 @@ service cloud.firestore {
 
     // Repository folders
     match /repository_folders/{folderId} {
-      allow read, write: if request.auth != null;
+      allow read, update, delete: if isAdmin() || isOwner(resource.data.userId);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
     }
 
     // Repository files
     match /repository_files/{fileId} {
-      allow read, write: if request.auth != null;
+      allow read, update, delete: if isAdmin() || isOwner(resource.data.userId);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
       
       match /chunks/{chunkId} {
-        allow read, write: if request.auth != null;
+        allow read, update, delete: if isAdmin() || isOwner(get(/databases/$(database)/documents/repository_files/$(fileId)).data.userId);
+        allow create: if isAuthenticated() && get(/databases/$(database)/documents/repository_files/$(fileId)).data.userId == request.auth.uid;
       }
     }
     // Edital Settings Cache
@@ -183,7 +191,7 @@ service cloud.firestore {
 
     // AI Audits Cache
     match /ai_audits_cache/{cacheId} {
-      allow read, write: if true;
+      allow read, write: if request.auth != null;
     }
   }
 }

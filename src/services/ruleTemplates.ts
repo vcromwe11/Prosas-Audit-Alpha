@@ -19,7 +19,7 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
       documentType: 'Cartão CNPJ',
       dataToScrape: 'Data de Emissão',
       formatRegex: 'Emitido no dia\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isWithinThreeMonths(value, referenceDate) && getAgeInYears(openingDate, referenceDate) >= 2',
+      validationRule: '{"type": "AND", "rules": [{"type": "WITHIN_MONTHS", "months": 3}, {"type": "MIN_AGE_YEARS", "years": 2}]}',
       approvalTrigger: 'CNPJ Ativo, emitido há menos de 3 meses, e com tempo de abertura >= 2 anos.',
       rejectionTrigger: 'CNPJ inativo, vencido, ou não possui tempo mínimo de 2 anos de abertura.'
     }
@@ -35,7 +35,7 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
       documentType: 'CND Federal',
       dataToScrape: 'Data de Validade (Federal)',
       formatRegex: 'válida até\\s*(\\d{2}/\\d{2}/\\d{4})|válido até\\s*(\\d{2}/\\d{2}/\\d{4})|VALIDADE:\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isValidTo(value, referenceDate)',
+      validationRule: '{"type": "VALID_TO"}',
       approvalTrigger: 'CND Federal dentro do prazo de validade em relação à data do edital.',
       rejectionTrigger: 'CND Federal vencida na data de corte ou data de validade não encontrada.'
     }
@@ -51,7 +51,7 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
       documentType: 'CRF FGTS',
       dataToScrape: 'Data de Validade (FGTS)',
       formatRegex: 'Válido até\\s*(\\d{2}/\\d{2}/\\d{4})|válido até\\s*(\\d{2}/\\d{2}/\\d{4})|Validade:\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isValidTo(value, referenceDate)',
+      validationRule: '{"type": "VALID_TO"}',
       approvalTrigger: 'Certificado de FGTS (CRF) válido na data de referência.',
       rejectionTrigger: 'CRF FGTS vencido ou situação de irregularidade constatada.'
     }
@@ -67,7 +67,7 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
       documentType: 'CNDT Trabalhista',
       dataToScrape: 'Data de Validade CNDT',
       formatRegex: 'validade:\\s*(\\d{2}/\\d{2}/\\d{4})|válida até\\s*(\\d{2}/\\d{2}/\\d{4})|Vigência:\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isValidTo(value, referenceDate)',
+      validationRule: '{"type": "VALID_TO"}',
       approvalTrigger: 'Certidão CNDT regular e dentro do prazo de validade.',
       rejectionTrigger: 'CNDT Trabalhista vencida na data de corte ou padrão não identificado.'
     }
@@ -83,7 +83,7 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
       documentType: 'Recuperação Judicial',
       dataToScrape: 'Data de Emissão (Falência)',
       formatRegex: 'expedida em\\s*(\\d{2}/\\d{2}/\\d{4})|datado de\\s*(\\d{2}/\\d{2}/\\d{4})|emissão:\\s*(\\d{2}/\\d{2}/\\d{4})|Sessão de\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isWithinThreeMonths(value, referenceDate)',
+      validationRule: '{"type": "WITHIN_MONTHS", "months": 3}',
       approvalTrigger: 'Certidão de Falência/Recuperação expedida a menos de 3 meses.',
       rejectionTrigger: 'Certidão com emissão superior a 90 dias ou ausente de data.'
     }
@@ -99,7 +99,7 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
       documentType: 'CND Estadual',
       dataToScrape: 'Data de Validade Estadual',
       formatRegex: 'válida até\\s*(\\d{2}/\\d{2}/\\d{4})|validade:\\s*(\\d{2}/\\d{2}/\\d{4})|válida de\\s*\\d{2}/\\d{2}/\\d{4}\\s*a\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isValidTo(value, referenceDate)',
+      validationRule: '{"type": "VALID_TO"}',
       approvalTrigger: 'Suficiência fiscal estadual comprovada dentro do prazo.',
       rejectionTrigger: 'Certidão Estadual vencida ou data final de validade ilegível.'
     }
@@ -115,7 +115,7 @@ export const RULE_TEMPLATES: RuleTemplate[] = [
       documentType: 'CND Municipal',
       dataToScrape: 'Data de Validade Municipal',
       formatRegex: 'válida até\\s*(\\d{2}/\\d{2}/\\d{4})|validade:\\s*(\\d{2}/\\d{2}/\\d{4})|válida de\\s*\\d{2}/\\d{2}/\\d{4}\\s*a\\s*(\\d{2}/\\d{2}/\\d{4})',
-      validationRule: 'isValidTo(value, referenceDate)',
+      validationRule: '{"type": "VALID_TO"}',
       approvalTrigger: 'Certidão Municipal regular e válida perante o corte de inscrição.',
       rejectionTrigger: 'CND Municipal vencida na data do edital ou sem identificação.'
     }

@@ -6,6 +6,7 @@ import { useAuthGuard } from '../hooks/useAuthGuard';
 import { 
     subscribeToRepositoryFolders, 
     subscribeToRepositoryFiles, 
+    subscribeToRepositoryFilesAll,
     createRepositoryFolder, 
     updateRepositoryFolder, 
     deleteRepositoryFolder, 
@@ -45,16 +46,40 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
-    const unsubFolders = subscribeToRepositoryFolders(setFolders);
-    return () => unsubFolders();
-  }, []);
+  const [legacyCounts, setLegacyCounts] = useState<{folders: number, files: number} | null>(null);
 
   useEffect(() => {
+    if (!user) return;
+    const isAdmin = user.role === 'admin' || user.role === 'developer';
+    const unsubFolders = subscribeToRepositoryFolders(isAdmin, user.uid, (fetchedFolders) => {
+      setFolders(fetchedFolders);
+      if (isAdmin) {
+        const legacyFolders = fetchedFolders.filter(f => !f.userId).length;
+        setLegacyCounts(prev => ({ folders: legacyFolders, files: prev?.files || 0 }));
+      }
+    });
+    return () => unsubFolders();
+  }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const isAdmin = user.role === 'admin' || user.role === 'developer';
     // Fetch files for the selected folder, or root if selectedFolder is null
-    const unsubFiles = subscribeToRepositoryFiles(selectedFolder ? selectedFolder.id : null, setFiles);
-    return () => unsubFiles();
-  }, [selectedFolder]);
+    const unsubFiles = subscribeToRepositoryFiles(selectedFolder ? selectedFolder.id : null, isAdmin, user.uid, setFiles);
+    
+    let unsubAllFiles: () => void;
+    if (isAdmin) {
+      unsubAllFiles = subscribeToRepositoryFilesAll(true, user.uid, (allFiles) => {
+        const legacyFiles = allFiles.filter(f => !f.userId).length;
+        setLegacyCounts(prev => ({ folders: prev?.folders || 0, files: legacyFiles }));
+      });
+    }
+
+    return () => {
+      unsubFiles();
+      if (unsubAllFiles) unsubAllFiles();
+    };
+  }, [selectedFolder, user]);
 
   const handleCreateFolder = async () => {
     if (!checkPermission('mutate_data')) {
@@ -225,11 +250,18 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
         exit={{ opacity: 0, y: -10 }}
         className="h-full flex flex-col bg-slate-50 dark:bg-gray-900"
     >
-        <div className="flex-none p-6 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900">
-            <h2 className="text-xl font-bold text-slate-800 dark:text-gray-100 flex items-center gap-2">
-                <i className="fas fa-folder-open text-prosas-blue dark:text-blue-400"></i> Repositório de Documentos
-            </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Gerencie os arquivos e projetos não analisados.</p>
+        <div className="flex-none p-6 border-b border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 flex justify-between items-start">
+            <div>
+              <h2 className="text-xl font-bold text-slate-800 dark:text-gray-100 flex items-center gap-2">
+                  <i className="fas fa-folder-open text-prosas-blue dark:text-blue-400"></i> Repositório de Documentos
+              </h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">Gerencie os arquivos e projetos não analisados.</p>
+            </div>
+            {legacyCounts && (
+              <div className="text-xs bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 p-2 rounded-md font-mono">
+                Admin: Documentos sem dono (Legado): {legacyCounts.folders} Pastas | {legacyCounts.files} Arquivos
+              </div>
+            )}
         </div>
 
         <div className="flex-1 overflow-hidden flex flex-col md:flex-row">

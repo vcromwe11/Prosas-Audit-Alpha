@@ -87,6 +87,7 @@ export const DashboardScreen: React.FC<DashboardScreenProps> = ({
 
           // If the edital ID changed, update all reports for this edital
           if (finalEditalId !== report.editalId) {
+              updateEditalIdCache(report.editalName, finalEditalId);
               const reportsInEdital = globalAllReports.filter(r => r.editalName === report.editalName);
               reportsInEdital.forEach(r => {
                   if (r.id === report.id) {

@@ -4,6 +4,7 @@ import { saveAllReports } from '../services/storageService';
 import { SavedReport } from '../types';
 import { auth, googleProvider } from '../firebase';
 import { signInWithPopup, linkWithPopup, GoogleAuthProvider } from 'firebase/auth';
+import { useToast } from '../contexts/ToastContext';
 
 export const useDriveBackup = (
     allReports: SavedReport[],
@@ -13,6 +14,7 @@ export const useDriveBackup = (
     const [driveToken, setDriveToken] = useState<string | null>(null);
     const [driveStatus, setDriveStatus] = useState<'disconnected' | 'ready' | 'syncing' | 'error'>('disconnected');
     const [driveMsg, setDriveMsg] = useState('');
+    const { success, error: toastError, warning } = useToast();
 
     const connectDrive = async () => {
         try {
@@ -41,7 +43,7 @@ export const useDriveBackup = (
         } catch (error: any) {
             console.error("Erro ao conectar Google Drive:", error);
             if (error.code === 'auth/credential-already-in-use') {
-                alert("Atenção: Esta conta Google já está cadastrada no sistema ou vinculada a outro usuário. Para acessar o Drive com esta conta, você deve fazer login diretamente através do Google na tela inicial.");
+                warning("Atenção: Esta conta Google já está cadastrada no sistema ou vinculada a outro usuário. Para acessar o Drive com esta conta, você deve fazer login diretamente através do Google na tela inicial.");
             }
             setDriveStatus('error');
             setDriveMsg('Erro na autenticação.');
@@ -77,7 +79,7 @@ export const useDriveBackup = (
 
     const handleRestoreFromDrive = useCallback(async () => {
         if (!checkPermission('mutate_data')) {
-            alert('Você não tem permissão para realizar esta ação.');
+            toastError('Você não tem permissão para realizar esta ação.');
             return;
         }
         if (!driveToken) return;
@@ -109,7 +111,7 @@ export const useDriveBackup = (
                 setDriveStatus('disconnected');
                 setDriveToken(null);
                 setDriveMsg('Sessão expirada. Reconecte-se.');
-                alert("Sua sessão do Google Drive expirou. Por favor, conecte-se novamente.");
+                warning("Sua sessão do Google Drive expirou. Por favor, conecte-se novamente.");
             } else {
                 setDriveStatus('error');
                 setDriveMsg('Erro ao restaurar');

@@ -1,18 +1,41 @@
 import React from 'react';
-import { useState, useRef } from 'react';
-import { CandidateAnalysis, AuditContext, SavedReport, AppSettings } from '../types';
+import { useState, useRef, useEffect } from 'react';
+import { CandidateAnalysis, AuditContext, SavedReport, AppSettings, AppStage } from '../types';
 import { extractPdfsFromZip } from '../services/zipService';
 import { runDocumentAudit } from '../services/geminiService';
 import { savePrompt, saveReport } from '../services/storageService';
+import { useToast } from '../contexts/ToastContext';
 
 export const useAnalysisRunner = (
     context: AuditContext,
     appSettings: AppSettings,
     allReports: SavedReport[],
-    analysisMode: 'IA_COMPLETA' | 'IA_OTIMIZADA'
+    analysisMode: 'IA_COMPLETA' | 'IA_OTIMIZADA',
+    stage?: AppStage
 ) => {
     const [candidates, setCandidates] = useState<CandidateAnalysis[]>([]);
     const abortControllersRef = useRef<Record<string, AbortController>>({});
+    const previousStatusRef = useRef<Record<string, string>>({});
+    const { success, error, warning } = useToast();
+
+    useEffect(() => {
+        candidates.forEach(candidate => {
+            const prevStatus = previousStatusRef.current[candidate.slotId];
+            const currentStatus = candidate.status;
+
+            if (prevStatus === 'analyzing' && (currentStatus === 'completed' || currentStatus === 'error')) {
+                if (stage !== AppStage.ANALYSIS_RUN) {
+                    if (currentStatus === 'completed') {
+                        success(`Análise de ${candidate.candidateName || 'Candidato'} concluída: ${candidate.result?.overallStatus || 'Concluída'}`);
+                    } else if (currentStatus === 'error') {
+                        error(`Análise de ${candidate.candidateName || 'Candidato'} falhou: ${candidate.error || 'Erro desconhecido'}`);
+                    }
+                }
+            }
+
+            previousStatusRef.current[candidate.slotId] = currentStatus;
+        });
+    }, [candidates, stage, success, error]);
 
     const addNewSlot = () => {
         setCandidates(prev => [...prev, {
@@ -48,7 +71,7 @@ export const useAnalysisRunner = (
                     const extracted = await extractPdfsFromZip(file);
                     processedFiles.push(...extracted);
                 } catch (e: any) {
-                    alert(`Erro ao extrair ZIP ${file.name}: ${e.message}`);
+                    error(`Erro ao extrair ZIP ${file.name}: ${e.message}`);
                 }
             } else {
                 processedFiles.push(file);
@@ -56,7 +79,7 @@ export const useAnalysisRunner = (
         }
 
         if (processedFiles.length === 0) {
-            alert("Nenhum arquivo PDF válido encontrado.");
+            warning("Nenhum arquivo PDF válido encontrado.");
             setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, candidateName: "", isLoadingFiles: false } : c));
             return;
         }
@@ -180,19 +203,17 @@ export const useAnalysisRunner = (
             } else {
                 setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, analysisPhase: 'AI_PROMPT' } : c));
                 
-                let criteriaForAi = context.criteriaText;
+                let criteriaForAi = (!isOtimizada || context.useGlobalInstructions !== false) ? context.criteriaText : "";
 
                 if (isOtimizada) {
                     const activeModules = (context.promptModules || []).filter(m => m.isActive);
                     if (activeModules.length > 0) {
-                        const modulesPrompt = activeModules.map(m => `--- ${m.documentType} ---\n${m.promptInstructions}`).join("\n\n");
-                        criteriaForAi += "\n\n=== INSTRUÇÕES ESPECÍFICAS DE DOCUMENTOS (IA OTIMIZADA) ===\n";
+                        criteriaForAi += "\n\n=== INSTRUÇÕES GERAIS PARA ANÁLISE DE MÓDULOS (IA OTIMIZADA) ===\n";
                         criteriaForAi += "⚠️ REGRAS OBRIGATÓRIAS PARA TODOS OS DOCUMENTOS:\n";
                         criteriaForAi += "1. CNPJ OBRIGATÓRIO: É IMPERATIVO que em TODOS os documentos analisados (sem exceção), os dados do CNPJ ou da Razão Social sejam correspondentes/iguais. Isso é para garantir que os documentos pertençam à mesma organização.\n";
-                        criteriaForAi += "2. TRIAGEM DOS ARQUIVOS: O seu primeiro movimento nesta análise DEVE SER localizar entre os documentos enviados quais são aqueles exigidos pelos módulos abaixo.\n";
+                        criteriaForAi += "2. TRIAGEM DOS ARQUIVOS: O seu primeiro movimento nesta análise DEVE SER localizar entre os documentos enviados quais são aqueles exigidos pelos módulos de análise.\n";
                         criteriaForAi += "   - DESCARTE imediatamente qualquer documento enviado que NÃO seja exigido pelos módulos (ex: se enviaram foto de projeto mas não há módulo pedindo isso, descarte).\n";
-                        criteriaForAi += "   - No início do seu relatório final, você DEVE listar os arquivos enviados e sinalizar visualmente se foram utilizados ou descartados (ex: '✅ [Nome do Arquivo] - Utilizado', '❌ [Nome do Arquivo] - Descartado'). Arquivos descartados NÃO devem entrar na análise subsequente, e você NÃO DEVE gerar pontos de checagem (points) no JSON para eles. Eles devem ser sumariamente ignorados do banco de dados final.\n\n";
-                        criteriaForAi += "Analise APENAS os documentos exigidos nos módulos a seguir utilizando as respectivas instruções:\n\n" + modulesPrompt;
+                        criteriaForAi += "   - No início do seu relatório final, você DEVE listar os arquivos enviados e sinalizar visualmente se foram utilizados ou descartados (ex: '✅ [Nome do Arquivo] - Utilizado', '❌ [Nome do Arquivo] - Descartado'). Arquivos descartados NÃO devem entrar na análise subsequente, e você NÃO DEVE gerar pontos de checagem (points) no JSON para eles. Eles devem ser sumariamente ignorados do banco de dados final.\n";
                     }
                 } else if (authReport) {
                     const optimizedInstruction = "1. Os documentos descritos no relatório acima JÁ FORAM AVALIADOS. Você os recebeu nos anexos, mas pode confiar no status de aprovação do laudo local.\n2.";
@@ -201,9 +222,9 @@ export const useAnalysisRunner = (
                 }
 
                 const aiData = await runDocumentAudit(
-                    context.regulationText,
-                    context.formTemplateText,
-                    context.miscFilesText,
+                    context.excludeContextInAnalysis ? "" : context.regulationText,
+                    context.excludeContextInAnalysis ? "" : context.formTemplateText,
+                    context.excludeContextInAnalysis ? "" : context.miscFilesText,
                     criteriaForAi,
                     filesForAi,
                     [], 

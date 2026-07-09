@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { RepositoryFolder, RepositoryFile, AppSettings } from '../types';
 import { useAuth } from '../contexts/AuthContext';
 import { useAuthGuard } from '../hooks/useAuthGuard';
+import { useToast } from '../contexts/ToastContext';
 import { 
     subscribeToRepositoryFolders, 
     subscribeToRepositoryFiles, 
@@ -23,6 +24,7 @@ interface RepositoryScreenProps {
 export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings }) => {
   const { user } = useAuth();
   const { checkPermission } = useAuthGuard();
+  const { error: toastError, warning } = useToast();
   const [folders, setFolders] = useState<RepositoryFolder[]>([]);
   const [files, setFiles] = useState<RepositoryFile[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<RepositoryFolder | null>(null);
@@ -83,7 +85,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
 
   const handleCreateFolder = async () => {
     if (!checkPermission('mutate_data')) {
-      alert('Sem permissão.');
+      toastError('Ação negada: Sem permissão.');
       return;
     }
     if (!newFolderName.trim()) return;
@@ -94,7 +96,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
 
   const handleDeleteFolder = (folder: RepositoryFolder) => {
     if (!checkPermission('mutate_data')) {
-        alert('Sem permissão.');
+        toastError('Ação negada: Sem permissão.');
         return;
     }
     setFolderToDelete(folder);
@@ -121,13 +123,13 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
       await deleteRepositoryFolder(folder.id);
     } catch (e: any) {
       console.error(e);
-      alert(`Erro ao deletar pasta: ${e.message}`);
+      toastError(`Erro ao deletar pasta: ${e.message}`);
     }
   };
 
   const handleRenameFolder = async (folderId: string) => {
     if (!checkPermission('mutate_data')) {
-        alert('Sem permissão.');
+        toastError('Ação negada: Sem permissão.');
         return;
     }
     if (!editingFolderName.trim()) return;
@@ -137,7 +139,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
 
     const handleFileUpload = async (event: any, overrideTargetFolderId: string | null = null) => {
       if (!checkPermission('mutate_data')) {
-          alert('Sem permissão.');
+          toastError('Ação negada: Sem permissão.');
           return;
       }
       
@@ -191,7 +193,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
               });
           } catch (e) {
               console.error("Erro no upload do arquivo:", file.name, e);
-              alert(`Erro ao fazer upload do arquivo ${file.name}. Verifique as permissões do Firebase Storage.`);
+              toastError(`Erro ao fazer upload do arquivo ${file.name}. Verifique as permissões do Firebase Storage.`);
           }
 
           completed++;
@@ -204,7 +206,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
   
     const handleDeleteFile = (file: RepositoryFile) => {
       if (!checkPermission('mutate_data')) {
-          alert('Sem permissão.');
+          toastError('Ação negada: Sem permissão.');
           return;
       }
       setFileToDelete(file);
@@ -219,7 +221,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
 
     const handleMoveFile = async (fileId: string, folderId: string) => {
         if (!checkPermission('mutate_data')) {
-            alert('Sem permissão.');
+            toastError('Ação negada: Sem permissão.');
             return;
         }
         await updateRepositoryFile(fileId, { folderId });
@@ -238,7 +240,7 @@ export const RepositoryScreen: React.FC<RepositoryScreenProps> = ({ appSettings 
             setTimeout(() => URL.revokeObjectURL(url), 100);
         } catch (e: any) {
             console.error("Download fail:", e);
-            alert(`Erro ao fazer download: ${e.message}`);
+            toastError(`Erro ao fazer download: ${e.message}`);
         }
     };
 

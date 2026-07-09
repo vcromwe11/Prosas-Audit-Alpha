@@ -1,3 +1,4 @@
+import { ToastProvider } from "./src/contexts/ToastContext";
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './src/App';
@@ -17,7 +18,7 @@ root.render(
     <ErrorBoundary>
       <AuthProvider>
         
-            <App />
+            <ToastProvider><App /></ToastProvider>
             <Analytics />
           
       </AuthProvider>

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { subscribeToRepositoryFolders, subscribeToRepositoryFilesAll } from '../services/storageService';
 import { RepositoryFile, RepositoryFolder } from '../types';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 
 export const RepositoryPickerDialog: React.FC<{
   isOpen: boolean;
@@ -9,6 +10,7 @@ export const RepositoryPickerDialog: React.FC<{
   onSelect: (files: RepositoryFile[]) => void;
 }> = ({ isOpen, onClose, onSelect }) => {
   const { user } = useAuth();
+  const { warning } = useToast();
   const [folders, setFolders] = useState<RepositoryFolder[]>([]);
   const [files, setFiles] = useState<RepositoryFile[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -118,7 +120,7 @@ export const RepositoryPickerDialog: React.FC<{
                   setSelectedFolder(null);
                   onClose();
                 } else {
-                  alert("Esta pasta está vazia.");
+                  warning("Esta pasta está vazia.");
                 }
               }} className="px-4 py-2 bg-prosas-blue text-white rounded font-bold hover:bg-blue-700">
                 Adicionar todos da pasta

@@ -19,7 +19,7 @@ const parseDate = (str: string) => {
     }
     const isoParts = str.split('-');
     if (isoParts.length === 3) {
-        // Handle YYYY-MM-DD locally to avoid UTC midnight shift
+        // Handle YYYY-MM-DD locally to avoid UTC midnight shift (horário local)
         return new Date(parseInt(isoParts[0]), parseInt(isoParts[1]) - 1, parseInt(isoParts[2].substring(0, 2)));
     }
     return new Date(str);
@@ -91,8 +91,11 @@ const extractRegex = (text: string, regexStr: string | RegExp): string | null =>
 };
 
 const extractCnpj = (text: string): string | null => {
+    // Busca preferencialmente por ocorrências próximas a um rótulo "CNPJ"
     const labelMatch = text.match(/CNPJ[^\d]*(\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2})/i);
     if (labelMatch) return labelMatch[1];
+    
+    // Respaldo: pega a primeira ocorrência encontrada
     const match = text.match(/\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}/);
     return match ? match[0] : null;
 };
@@ -113,6 +116,7 @@ const hasValidCndStatus = (text: string): { isValid: boolean, status: string } =
     }
     if (upperText.includes("REGULARIDADE") && !upperText.includes("IRREGULARIDADE")) {
         // More specific to FGTS / CRF but good to have
+        // Atesta situação regular apenas se não houver 'IRREGULARIDADE' no texto
         return { isValid: true, status: "REGULAR" };
     }
     return { isValid: false, status: "POSITIVA / IRREGULAR" };
@@ -246,6 +250,7 @@ export const runDeterministicAuth = async (
                 
                 if (docType.includes('fgts')) {
                      const upperText = text.toUpperCase();
+                     // Atesta regularidade apenas se não houver IRREGULARIDADE
                      const hasRegularity = upperText.includes('REGULARIDADE') && !upperText.includes('IRREGULARIDADE');
                      isStatusOk = hasRegularity;
                      statusFound = hasRegularity ? 'SITUAÇÃO REGULAR DO FGTS' : 'SITUAÇÃO IRREGULAR';

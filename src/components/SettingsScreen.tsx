@@ -2,9 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PROMPTS } from '../prompts';
 import { GlobalPrompt, UserProfile, AppStage } from '../types';
-import { subscribeToGlobalPrompts, updateGlobalPrompt, updateUserProfile } from '../services/storageService';
+import { subscribeToGlobalPrompts, updateGlobalPrompt, updateUserProfile, getAiUsageLogs, AiUsageEntry } from '../services/storageService';
 import UserManagementScreen from './UserManagementScreen';
 import { useAuthGuard } from '../hooks/useAuthGuard';
+import { useToast } from '../contexts/ToastContext';
+import { getAvailableModels, AiModelConfig } from '../services/geminiService';
 
 interface SettingsScreenProps {
   isDarkMode: boolean;
@@ -31,9 +33,16 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   user,
   handleSetStage
 }) => {
+  const { error: toastError, warning } = useToast();
   const [globalPrompts, setGlobalPrompts] = useState<Record<string, string>>({});
   const [editingPrompt, setEditingPrompt] = useState<string | null>(null);
-  const [editingText, setEditingText] = useState('');
+  const [editingText, setEditingText] = useState("");
+  const [availableModels, setAvailableModels] = useState<AiModelConfig[]>([]);
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+  const [aiLogs, setAiLogs] = useState<AiUsageEntry[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+  const COST_PER_1M_CHARS = 0.05; // Estimativa (ex: US$ 0.05 a cada 1M caracteres)
   
   const [profileForm, setProfileForm] = useState({
     name: user?.name || user?.displayName || '',
@@ -44,7 +53,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileMsg, setProfileMsg] = useState('');
   
-  const [activeTab, setActiveTab] = useState<'general' | 'users' | 'advanced' | 'about' | 'honeypot'>('general');
+  const [activeTab, setActiveTab] = useState<'general' | 'users' | 'advanced' | 'ai_logs' | 'about' | 'honeypot'>('general');
   const [honeypotStage, setHoneypotStage] = useState(0);
   const [honeypotLoadingCompleted, setHoneypotLoadingCompleted] = useState(false);
   const [honeypotLoadingDuration, setHoneypotLoadingDuration] = useState(2.5);
@@ -90,6 +99,39 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
   const [expandedFeature, setExpandedFeature] = useState<string | null>(null);
   const { checkPermission } = useAuthGuard();
 
+  
+  useEffect(() => {
+      if (activeTab === 'ai_logs' && user) {
+          let isMounted = true;
+          const loadLogs = async () => {
+              setIsLoadingLogs(true);
+              const logs = (await getAiUsageLogs(1000, 90)) as unknown as AiUsageEntry[];
+              if (isMounted) {
+                  setAiLogs(logs);
+                  setIsLoadingLogs(false);
+              }
+          };
+          loadLogs();
+          return () => { isMounted = false; };
+      }
+  }, [activeTab, user?.role]);
+
+  useEffect(() => {
+      if (activeTab === 'advanced' && availableModels.length === 0) {
+          let isMounted = true;
+          const loadModels = async () => {
+              setIsLoadingModels(true);
+              const models = await getAvailableModels();
+              if (isMounted) {
+                  setAvailableModels(models);
+                  setIsLoadingModels(false);
+              }
+          };
+          loadModels();
+          return () => { isMounted = false; };
+      }
+  }, [activeTab, availableModels.length]);
+
   useEffect(() => {
     if (user) {
       setProfileForm({
@@ -124,7 +166,7 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
 
   const handleSavePrompt = async (key: string) => {
       if (!checkPermission('admin_action')) {
-          alert('Ação não autorizada. Apenas administradores podem alterar prompts.');
+          toastError('Ação não autorizada. Apenas administradores podem alterar prompts.');
           return;
       }
       if (!editingText.trim()) return;
@@ -206,6 +248,18 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                     }`}
                 >
                     <i className="fas fa-code mr-2"></i>Avançado
+                </button>
+            )}
+            {user && (
+                <button
+                    onClick={() => setActiveTab('ai_logs')}
+                    className={`py-2 px-4 border-b-2 font-medium text-sm transition-colors ${
+                        activeTab === 'ai_logs'
+                            ? 'border-prosas-blue text-prosas-blue dark:border-blue-400 dark:text-blue-400'
+                            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+                    }`}
+                >
+                    <i className="fas fa-chart-line mr-2"></i>Uso e Erros de IA
                 </button>
             )}
             <button
@@ -745,6 +799,117 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
             </div>
         )}
 
+        {/* AI Logs Section */}
+        {activeTab === 'ai_logs' && user?.role === 'admin' && (() => {
+            const now = Date.now();
+            const oneDay = 24 * 60 * 60 * 1000;
+            const oneWeek = 7 * oneDay;
+            const oneMonth = 30 * oneDay;
+
+            const stats = {
+                callsToday: 0, callsWeek: 0, callsMonth: 0,
+                errorsToday: 0, errorsWeek: 0, errorsMonth: 0,
+                charsToday: 0, charsWeek: 0, charsMonth: 0
+            };
+
+            aiLogs.forEach(log => {
+                const ts = (log as any).timestamp;
+                const isToday = (now - ts) < oneDay;
+                const isWeek = (now - ts) < oneWeek;
+                const isMonth = (now - ts) < oneMonth;
+
+                if (isMonth) {
+                    stats.callsMonth++;
+                    stats.charsMonth += log.approxChars || 0;
+                    if (!log.success) stats.errorsMonth++;
+                }
+                if (isWeek) {
+                    stats.callsWeek++;
+                    stats.charsWeek += log.approxChars || 0;
+                    if (!log.success) stats.errorsWeek++;
+                }
+                if (isToday) {
+                    stats.callsToday++;
+                    stats.charsToday += log.approxChars || 0;
+                    if (!log.success) stats.errorsToday++;
+                }
+            });
+
+            return (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
+                    <div className="p-6 border-b border-gray-100 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50 flex justify-between items-center">
+                        <div>
+                            <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100 flex items-center gap-2">
+                                <i className="fas fa-chart-line text-prosas-blue"></i> Uso e Erros de IA
+                            </h2>
+                            <p className="text-sm text-gray-500 mt-1">Estimativa de uso e monitoramento de falhas nos últimos 90 dias.</p>
+                        </div>
+                        {isLoadingLogs && <i className="fas fa-circle-notch fa-spin text-prosas-blue"></i>}
+                    </div>
+                    <div className="p-6 space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
+                                <h3 className="text-blue-800 dark:text-blue-300 font-bold mb-1">Chamadas Hoje</h3>
+                                <p className="text-2xl font-black text-blue-900 dark:text-blue-100">{stats.callsToday}</p>
+                                <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Custo est.: US$ {((stats.charsToday / 1000000) * COST_PER_1M_CHARS).toFixed(4)}</p>
+                            </div>
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
+                                <h3 className="text-blue-800 dark:text-blue-300 font-bold mb-1">Chamadas 7 Dias</h3>
+                                <p className="text-2xl font-black text-blue-900 dark:text-blue-100">{stats.callsWeek}</p>
+                                <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Custo est.: US$ {((stats.charsWeek / 1000000) * COST_PER_1M_CHARS).toFixed(4)}</p>
+                            </div>
+                            <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-lg border border-blue-100 dark:border-blue-800">
+                                <h3 className="text-blue-800 dark:text-blue-300 font-bold mb-1">Chamadas 30 Dias</h3>
+                                <p className="text-2xl font-black text-blue-900 dark:text-blue-100">{stats.callsMonth}</p>
+                                <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">Custo est.: US$ {((stats.charsMonth / 1000000) * COST_PER_1M_CHARS).toFixed(4)}</p>
+                            </div>
+
+                            <div className={`p-4 rounded-lg border ${stats.errorsToday > 5 ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800' : 'bg-gray-50 border-gray-200 dark:bg-gray-800 dark:border-gray-700'}`}>
+                                <h3 className={`font-bold mb-1 ${stats.errorsToday > 5 ? 'text-red-800 dark:text-red-300' : 'text-gray-700 dark:text-gray-300'}`}>Erros Hoje</h3>
+                                <p className={`text-2xl font-black ${stats.errorsToday > 5 ? 'text-red-900 dark:text-red-100' : 'text-gray-800 dark:text-gray-200'}`}>{stats.errorsToday}</p>
+                            </div>
+                            <div className={`p-4 rounded-lg border ${stats.errorsWeek > 20 ? 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800' : 'bg-gray-50 border-gray-200 dark:bg-gray-800 dark:border-gray-700'}`}>
+                                <h3 className={`font-bold mb-1 ${stats.errorsWeek > 20 ? 'text-red-800 dark:text-red-300' : 'text-gray-700 dark:text-gray-300'}`}>Erros 7 Dias</h3>
+                                <p className={`text-2xl font-black ${stats.errorsWeek > 20 ? 'text-red-900 dark:text-red-100' : 'text-gray-800 dark:text-gray-200'}`}>{stats.errorsWeek}</p>
+                            </div>
+                            <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                                <h3 className="text-gray-700 dark:text-gray-300 font-bold mb-1">Erros 30 Dias</h3>
+                                <p className="text-2xl font-black text-gray-800 dark:text-gray-200">{stats.errorsMonth}</p>
+                            </div>
+                        </div>
+
+                        <div>
+                            <h3 className="font-bold text-gray-700 dark:text-gray-200 mb-4">Últimos Erros Registrados</h3>
+                            <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                                {aiLogs.filter(l => !l.success).slice(0, 50).length === 0 ? (
+                                    <div className="p-8 text-center text-gray-500">Nenhum erro registrado no período.</div>
+                                ) : (
+                                    <div className="divide-y divide-gray-200 dark:divide-gray-700 max-h-96 overflow-y-auto">
+                                        {aiLogs.filter(l => !l.success).slice(0, 50).map((log, idx) => (
+                                            <div key={idx} className="p-4 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <span className="text-xs font-mono text-gray-500">{new Date((log as any).timestamp).toLocaleString()}</span>
+                                                    <span className="text-xs font-bold bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300 px-2 py-0.5 rounded uppercase">Falha</span>
+                                                </div>
+                                                <div className="flex flex-wrap gap-2 mb-2">
+                                                    <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-0.5 rounded">Model: {log.model}</span>
+                                                    <span className="text-xs bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 px-2 py-0.5 rounded">Task: {log.taskType}</span>
+                                                    {log.editalName && <span className="text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-300 px-2 py-0.5 rounded truncate max-w-[200px]">{log.editalName}</span>}
+                                                </div>
+                                                <div className="text-sm font-mono text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/10 p-2 rounded break-words">
+                                                    {log.errorMessage || "Erro desconhecido"}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        })()}
+
         {/* Advanced Section */}
         {activeTab === 'advanced' && user?.role === 'admin' && (
             <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden transition-colors duration-200">
@@ -755,20 +920,60 @@ export const SettingsScreen: React.FC<SettingsScreenProps> = ({
                 </div>
                 <div className="p-6 space-y-6">
                     <div className="pb-6 border-b border-gray-100 dark:border-gray-700">
-                        <h3 className="font-bold text-gray-700 dark:text-gray-200 mb-2">Modelo de Inteligência Artificial</h3>
+                        <h3 className="font-bold text-gray-700 dark:text-gray-200 mb-2">Modelos de Inteligência Artificial</h3>
                         <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
-                            Selecione o modelo do Gemini que será utilizado para as análises e extração de dados. Modelos mais avançados possuem maior custo e limites de cota mais estritos.
+                            Configure os modelos Gemini que serão utilizados em diferentes etapas da análise.
                         </p>
-                        <select 
-                            value={appSettings.aiModel || 'gemini-2.5-flash'}
-                            onChange={(e) => setAppSettings((prev: any) => ({ ...prev, aiModel: e.target.value }))}
-                            className="bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 text-sm rounded focus:ring-prosas-blue focus:border-prosas-blue block w-full p-2.5"
-                        >
-                            <option value="gemini-1.5-flash">Gemini 1.5 Flash (Rápido, Menor Custo, Ótimo para Triagem)</option>
-                            <option value="gemini-1.5-pro">Gemini 1.5 Pro (Raciocínio Complexo, Maior Custo)</option>
-                            <option value="gemini-2.0-flash">Gemini 2.0 Flash (Nova Geração, Rápido, Excelente Custo-Benefício)</option>
-                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Padrão, Otimizado para Alta Performance)</option>
-                        </select>
+                        
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Modelo Econômico (Triagem e Módulos)</h4>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Usado para tarefas rápidas de separação de documentos e validações individuais simples.</p>
+                                <select 
+                                    value={appSettings.aiModelEconomico || appSettings.aiModel || 'gemini-2.5-flash'}
+                                    onChange={(e) => setAppSettings((prev: any) => ({ ...prev, aiModelEconomico: e.target.value }))}
+                                    className="bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 text-sm rounded focus:ring-prosas-blue focus:border-prosas-blue block w-full p-2.5"
+                                    disabled={isLoadingModels}
+                                >
+                                    {isLoadingModels ? (
+                                        <option value="">Carregando modelos...</option>
+                                    ) : availableModels.length > 0 ? (
+                                        availableModels.map(m => (
+                                            <option key={m.name} value={m.name}>{m.displayName}</option>
+                                        ))
+                                    ) : (
+                                        <>
+                                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Excelente Custo-Benefício)</option>
+                                            <option value="gemini-2.0-flash">Gemini 2.0 Flash (Nova Geração, Rápido)</option>
+                                        </>
+                                    )}
+                                </select>
+                            </div>
+                            
+                            <div>
+                                <h4 className="text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">Modelo Potente (Orquestração)</h4>
+                                <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Usado para consolidar resultados, cruzar dados complexos e gerar o laudo final.</p>
+                                <select 
+                                    value={appSettings.aiModelPotente || appSettings.aiModel || 'gemini-2.5-flash'}
+                                    onChange={(e) => setAppSettings((prev: any) => ({ ...prev, aiModelPotente: e.target.value }))}
+                                    className="bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-200 text-sm rounded focus:ring-prosas-blue focus:border-prosas-blue block w-full p-2.5"
+                                    disabled={isLoadingModels}
+                                >
+                                    {isLoadingModels ? (
+                                        <option value="">Carregando modelos...</option>
+                                    ) : availableModels.length > 0 ? (
+                                        availableModels.map(m => (
+                                            <option key={m.name} value={m.name}>{m.displayName}</option>
+                                        ))
+                                    ) : (
+                                        <>
+                                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Rápido, Menor Custo)</option>
+                                            <option value="gemini-2.5-pro">Gemini 2.5 Pro (Raciocínio Complexo, Maior Custo)</option>
+                                        </>
+                                    )}
+                                </select>
+                            </div>
+                        </div>
                     </div>
 
                     <div>

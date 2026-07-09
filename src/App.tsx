@@ -37,17 +37,21 @@ import { useAuth } from './contexts/AuthContext';
 import { useAnalysisRunner } from './hooks/useAnalysisRunner';
 import { useDriveBackup } from './hooks/useDriveBackup';
 import { useAppSettings } from './hooks/useAppSettings';
+import { useToast } from './contexts/ToastContext';
 
 const App: React.FC = () => {
   const [stage, setStage] = useState<AppStage>(AppStage.LOGIN);
   const [previousStage, setPreviousStage] = useState<AppStage>(AppStage.DASHBOARD);
   const [firebaseError, setFirebaseError] = useState<string | null>(null);
+  const [activeModal, setActiveModal] = useState<'SETTINGS' | 'REPOSITORY' | 'IDEAS' | null>(null);
+  const { user } = useAuth();
+  const { success, error: toastError, warning, toast } = useToast();
 
   const { checkPermission } = useAuthGuard({
     stage,
     onUnauthorized: () => {
       setStage(AppStage.DASHBOARD);
-      alert('Acesso não autorizado. Redirecionando para o painel principal.');
+      toastError('Ação negada: Acesso não autorizado. Redirecionando para o painel principal.');
     }
   });
 
@@ -66,6 +70,7 @@ const App: React.FC = () => {
   }, []);
 
   const handleSetStage = (newStage: AppStage) => {
+      setActiveModal(null);
       setPreviousStage(stage);
       setStage(newStage);
   };
@@ -118,7 +123,7 @@ const App: React.FC = () => {
   // --- IDEAS HANDLERS ---
   const handleSaveIdea = async () => {
       if (!checkPermission('mutate_data')) {
-          alert('Você não tem permissão para realizar esta ação.');
+          toastError('Ação negada: Você não tem permissão para realizar esta ação.');
           return;
       }
       if (!newIdea.title.trim() || !newIdea.description.trim()) return;
@@ -134,7 +139,7 @@ const App: React.FC = () => {
 
   const handleSaveComment = async (ideaId: string) => {
       if (!checkPermission('mutate_data')) {
-          alert('Você não tem permissão para realizar esta ação.');
+          toastError('Ação negada: Você não tem permissão para realizar esta ação.');
           return;
       }
       if (!newComment.trim()) return;
@@ -177,7 +182,7 @@ const App: React.FC = () => {
       setIdeaToDelete(ideaId);
   };
   const { 
-    user, 
+     
     email, setEmail, 
     password, setPassword, 
     isLoginMode, setIsLoginMode, 
@@ -229,12 +234,12 @@ const App: React.FC = () => {
 
   const { driveToken, driveStatus, driveMsg, connectDrive, handleBackupToDrive, handleRestoreFromDrive } = useDriveBackup(allReports, appSettings.autoSaveDrive, checkPermission);
 
-  const { candidates, setCandidates, triggerAnalysis, abortAnalysis, triggerAllPendingAnalyses, addNewSlot, removeSlot, handleSlotFilesSelected } = useAnalysisRunner(context, appSettings, allReports, analysisMode);
+  const { candidates, setCandidates, triggerAnalysis, abortAnalysis, triggerAllPendingAnalyses, addNewSlot, removeSlot, handleSlotFilesSelected } = useAnalysisRunner(context, appSettings, allReports, analysisMode, stage);
 
   
   const handleConfirmDelete = async () => {
     if (!checkPermission('mutate_data')) {
-        alert('Você não tem permissão para realizar esta ação.');
+        toastError('Ação negada: Você não tem permissão para realizar esta ação.');
         return;
     }
     if (reportToDelete) {
@@ -249,25 +254,21 @@ const App: React.FC = () => {
             await logAuditAction('delete_report', { reportId: reportToDelete.id });
         } catch (e) {
             console.error("Erro ao deletar", e);
-            alert("Erro ao deletar o relatório.");
+            toastError("Erro ao deletar o relatório.");
         }
     }
   };
 
-  const handleUpdateReport = async (reportId: string, title: string, markdown: string) => {
+  const handleUpdateReport = async (updatedReport: SavedReport) => {
     try {
-        const reportToUpdate = allReports.find(r => r.id === reportId);
-        if (reportToUpdate) {
-            const updatedReport = { ...reportToUpdate, title, markdown };
-            await updateReport(updatedReport);
-            setAllReports(prev => prev.map(r => r.id === reportId ? updatedReport : r));
-            if (selectedReport?.id === reportId) {
-                setSelectedReport(updatedReport);
-            }
+        await updateReport(updatedReport);
+        setAllReports(prev => prev.map(r => r.id === updatedReport.id ? updatedReport : r));
+        if (selectedReport?.id === updatedReport.id) {
+            setSelectedReport(updatedReport);
         }
     } catch (e) {
         console.error("Erro ao atualizar", e);
-        alert("Erro ao atualizar o relatório.");
+        toastError("Erro ao atualizar o relatório.");
     }
   };
 
@@ -409,7 +410,7 @@ const App: React.FC = () => {
           
 if (repoPickerTarget === 'batch') {
               if (files.length > appSettings.maxConcurrentSlots) {
-                  alert(`Você selecionou ${files.length} arquivos, mas o limite atual é ${appSettings.maxConcurrentSlots}. Os arquivos serão adicionados, mas a análise em lote respeitará esse limite, processando ${appSettings.maxConcurrentSlots} por vez.`);
+                  warning(`Você selecionou ${files.length} arquivos, mas o limite atual é ${appSettings.maxConcurrentSlots}. Os arquivos serão adicionados, mas a análise em lote respeitará esse limite, processando ${appSettings.maxConcurrentSlots} por vez.`);
               }
               // Create new slots for each selected file (expecting ZIPs or PDFs)
               const newCandidates = [];
@@ -444,7 +445,7 @@ if (repoPickerTarget === 'batch') {
                               return c;
                           }));
                       }).catch(e => {
-                          alert(`Erro ao extrair ZIP ${file.name}: ${e.message}`);
+                          toastError(`Erro ao extrair ZIP ${file.name}: ${e.message}`);
                           setCandidates(prev => prev.map(c => c.slotId === slotId ? { ...c, isLoadingFiles: false, error: e.message, status: 'error' } : c));
                       });
                   } else {
@@ -461,7 +462,7 @@ if (repoPickerTarget === 'batch') {
           }
       } catch (err) {
           console.error("Error pulling file from repo:", err);
-          alert("Erro ao puxar documento do repositório");
+          toastError("Erro ao puxar documento do repositório");
           if (typeof repoPickerTarget === 'string' && ['regulation', 'form', 'misc'].includes(repoPickerTarget)) {
               setLoadingContext(false);
           } else {
@@ -473,15 +474,15 @@ if (repoPickerTarget === 'batch') {
   
   const handleSaveEditalSettings = async (autoProceed: boolean = false) => {
     if (!checkPermission('mutate_data')) {
-        alert('Você não tem permissão para realizar esta ação.');
+        toastError('Ação negada: Você não tem permissão para realizar esta ação.');
         return;
     }
     try {
         await saveEditalSettings(context.editalTitle, context);
-        if (!autoProceed) alert("Configurações do edital salvas com sucesso!");
+        if (!autoProceed) success("Configurações do edital salvas com sucesso!");
     } catch (e) {
         console.error("Failed to save edital settings", e);
-        if (!autoProceed) alert("Erro ao salvar as configurações do edital.");
+        if (!autoProceed) toastError("Erro ao salvar as configurações do edital.");
     }
     if (autoProceed) {
         if (candidates.length === 0) addNewSlot();
@@ -491,7 +492,7 @@ if (repoPickerTarget === 'batch') {
 
 const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type: 'regulation' | 'form' | 'misc') => {
     if (!checkPermission('mutate_data')) {
-        alert('Você não tem permissão para realizar esta ação.');
+        toastError('Ação negada: Você não tem permissão para realizar esta ação.');
         return;
     }
 
@@ -502,7 +503,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
     try {
         const text = await extractTextFromPdf(file);
         if (!text || text.trim().length === 0) {
-            alert("Atenção: O arquivo parece estar vazio ou a IA não conseguiu extrair texto dele. Se for uma imagem digitalizada, tente usar um PDF com texto.");
+            warning("Atenção: O arquivo parece estar vazio ou a IA não conseguiu extrair texto dele. Se for uma imagem digitalizada, tente usar um PDF com texto.");
         }
         setContext(prev => {
             const newContext = { ...prev };
@@ -518,7 +519,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
             return newContext;
         });
     } catch (err) {
-        alert("Erro ao ler arquivo: " + err);
+        toastError("Erro ao ler arquivo: " + err);
     } finally {
         setLoadingContext(false);
     }
@@ -544,7 +545,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
 
   const handleSaveSingleModule = async (mod: DocumentPromptModule) => {
     if (!checkPermission('mutate_data')) {
-        alert('Você não tem permissão para realizar esta ação.');
+        toastError('Ação negada: Você não tem permissão para realizar esta ação.');
         return;
     }
 
@@ -562,14 +563,14 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
           }, 3000); // Reset saved status after 3 seconds
       } catch (e) {
           console.error(e);
-          alert('Erro ao salvar módulo');
+          toastError('Erro ao salvar módulo');
           setSavingModuleIds(prev => ({ ...prev, [mod.id]: null }));
       }
   };
 
   const handleSaveAllModules = async () => {
     if (!checkPermission('mutate_data')) {
-        alert('Você não tem permissão para realizar esta ação.');
+        toastError('Ação negada: Você não tem permissão para realizar esta ação.');
         return;
     }
 
@@ -588,7 +589,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
           }, 3000);
       } catch (e) {
           console.error(e);
-          alert('Erro ao salvar alguns módulos.');
+          toastError('Erro ao salvar alguns módulos.');
           setIsSavingAllModules('idle');
       }
   };
@@ -665,7 +666,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
         
   const handleDetectModules = async () => {
     if (!checkPermission('mutate_data')) {
-        alert('Você não tem permissão para realizar esta ação.');
+        toastError('Ação negada: Você não tem permissão para realizar esta ação.');
         return;
     }
 
@@ -689,7 +690,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
           }
       } catch (error) {
           console.error("Error auto-detecting modules:", error);
-          alert("Ocorreu um erro ao detectar os módulos. Tente novamente.");
+          toastError("Ocorreu um erro ao detectar os módulos. Tente novamente.");
       } finally {
           setIsDetectingModules(false);
       }
@@ -699,12 +700,12 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
 
   const handleGenerateCriteria = async (mode: 'standard' | 'economical' | 'specialized') => {
     if (!checkPermission('mutate_data')) {
-        alert('Você não tem permissão para realizar esta ação.');
+        toastError('Ação negada: Você não tem permissão para realizar esta ação.');
         return;
     }
 
       if (!context.regulationText) {
-          alert("Por favor, envie o regulamento primeiro.");
+          warning("Por favor, envie o regulamento primeiro.");
           return;
       }
       setIsGeneratingCriteria(true);
@@ -718,7 +719,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
           }
       } catch (error) {
           console.error("Error generating criteria:", error);
-          alert("Ocorreu um erro ao gerar critérios. Tente novamente.");
+          toastError("Ocorreu um erro ao gerar critérios. Tente novamente.");
       } finally {
           setIsGeneratingCriteria(false);
       }
@@ -761,6 +762,8 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
       );
   }
 
+  const emAndamento = candidates.filter(c => c.status === 'analyzing').length;
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 flex print:block font-sans text-slate-800 dark:text-slate-200 transition-colors duration-200">
       <input 
@@ -800,7 +803,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
           </div>
 
           <nav className="flex-grow p-4 overflow-y-auto custom-scrollbar overflow-x-hidden">
-              <div className="mb-6">
+              <div className="mb-6 flex flex-col gap-3">
                   {user?.role !== 'viewer' && (
                   <button 
                     onClick={() => {
@@ -812,6 +815,28 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
                   >
                       <i className="fas fa-plus"></i> {!isSidebarCollapsed && "Nova Análise"}
                   </button>
+                  )}
+                  
+                  {emAndamento > 0 && (
+                      <button
+                          onClick={() => handleSetStage(AppStage.ANALYSIS_RUN)}
+                          title={`${emAndamento} análise(s) em andamento`}
+                          className={`w-full bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-900/20 dark:hover:bg-indigo-900/40 text-indigo-700 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 font-bold py-2 rounded shadow-sm flex items-center justify-center gap-2 text-xs uppercase tracking-wide transition-colors duration-200 relative ${isSidebarCollapsed ? 'px-0' : 'px-3'}`}
+                      >
+                          {isSidebarCollapsed ? (
+                              <div className="relative flex items-center justify-center">
+                                  <i className="fas fa-spinner fa-spin text-lg"></i>
+                                  <span className="absolute -top-1.5 -right-1.5 bg-indigo-500 text-white text-[9px] w-4 h-4 rounded-full flex items-center justify-center border border-white dark:border-gray-800">
+                                      {emAndamento}
+                                  </span>
+                              </div>
+                          ) : (
+                              <>
+                                  <i className="fas fa-spinner fa-spin"></i>
+                                  <span>{emAndamento} {emAndamento === 1 ? 'Em Andamento' : 'Em Andamento'}</span>
+                              </>
+                          )}
+                      </button>
                   )}
               </div>
 
@@ -894,8 +919,8 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
 
                   <Tooltip text="Espaço para sugestões e anotações da equipe" enabled={appSettings.showTooltips}>
                       <button 
-                         onClick={() => { handleSetStage(AppStage.IDEAS); setSelectedReport(null); }}
-                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.IDEAS ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                         onClick={() => { setActiveModal('IDEAS'); setSelectedReport(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${activeModal === 'IDEAS' ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
                       >
                           <i className="fas fa-lightbulb"></i> {!isSidebarCollapsed && "Ideias e Notas"}
                       </button>
@@ -903,8 +928,8 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
 
                   <Tooltip text="Repositório de projetos e documentos" enabled={appSettings.showTooltips}>
                       <button 
-                         onClick={() => { handleSetStage(AppStage.REPOSITORY); setSelectedReport(null); }}
-                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.REPOSITORY ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                         onClick={() => { setActiveModal('REPOSITORY'); setSelectedReport(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${activeModal === 'REPOSITORY' ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
                       >
                           <i className="fas fa-folder-open"></i> {!isSidebarCollapsed && "Repositório"}
                       </button>
@@ -912,8 +937,8 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
 
                   <Tooltip text="Ajustar preferências do sistema" enabled={appSettings.showTooltips}>
                       <button 
-                         onClick={() => { handleSetStage(AppStage.SETTINGS); setSelectedReport(null); }}
-                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${stage === AppStage.SETTINGS ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
+                         onClick={() => { setActiveModal('SETTINGS'); setSelectedReport(null); }}
+                         className={`w-full text-left py-2 rounded text-sm flex items-center gap-3 transition-all duration-200 transform active:scale-95 ${activeModal === 'SETTINGS' ? 'bg-blue-50 dark:bg-blue-900/40 text-prosas-blue dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700/50'} ${isSidebarCollapsed ? 'justify-center px-0' : 'px-3'}`}
                       >
                           <i className="fas fa-cog"></i> {!isSidebarCollapsed && "Configurações"}
                       </button>
@@ -1114,41 +1139,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
               />
           )}
 
-          {/* VIEW: SETTINGS */}
-          {stage === AppStage.IDEAS && (
-              <IdeasScreen
-                ideas={ideas}
-                setIsIdeaModalOpen={setIsIdeaModalOpen}
-                setSelectedIdea={setSelectedIdea}
-              />
-          )}
-
-          {/* VIEW: REPOSITORY */}
-          {stage === AppStage.REPOSITORY && (
-              <RepositoryScreen
-                appSettings={appSettings}
-              />
-          )}
-
-          {stage === AppStage.SETTINGS && (
-              <motion.div
-                  key="settings"
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.2 }}
-                  className="max-w-4xl mx-auto"
-              >
-                  <SettingsScreen 
-                    isDarkMode={isDarkMode}
-                    setIsDarkMode={setIsDarkMode}
-                    appSettings={appSettings}
-                    setAppSettings={setAppSettings}
-                    user={user}
-                    handleSetStage={handleSetStage}
-                  />
-              </motion.div>
-          )}
+          
 
           {/* VIEW: SETUP */}
           {stage === AppStage.ANALYSIS_SETUP && (
@@ -1349,7 +1340,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
                                        onClick={() => {
                                            const existingTypes = (context.promptModules || []).map(m => m.documentType);
                                            const toAdd = globalPromptModules.filter(t => !existingTypes.includes(t.documentType)).map(t => ({...t, id: Math.random().toString(36).substring(7)}));
-                                           if(toAdd.length === 0) { alert('Todos os módulos padrões já foram incluídos!'); return; }
+                                           if(toAdd.length === 0) { warning('Todos os módulos padrões já foram incluídos!'); return; }
                                            setContext(prev => ({...prev, promptModules: enforceModuleOrder([...(prev.promptModules || []), ...toAdd])}));
                                        }}
                                        className="text-xs text-gray-500 hover:text-emerald-600 dark:text-gray-400 dark:hover:text-emerald-400 hover:bg-gray-100 dark:hover:bg-gray-800 px-3 py-1.5 rounded font-bold flex items-center gap-1.5 transition-colors"
@@ -1547,11 +1538,28 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
                                     <i className="fas fa-magic text-xl"></i>
                                 </div>
                                 <div>
-                                    <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">{isOtimizada ? "3. Instruções Globais Complementares" : "2. Critérios da IA (Prompt)"}</h2>
-                                    <Tooltip text={isOtimizada ? "Opcional. Instruções gerais que se aplicam a toda a análise, não a um documento específico. Como você está usando a IA Otimizada, o foco deve estar nos módulos acima." : "Edite as regras lógicas gerais que a IA usará para analisar todos os documentos."} enabled={appSettings.showTooltips} position="top">
-                                        <i className="fas fa-info-circle text-gray-400 hover:text-emerald-500 cursor-help ml-2"></i>
-                                    </Tooltip>
-                                    <p className="text-sm text-gray-500 dark:text-gray-400">{isOtimizada ? "Regras gerais aplicadas a todo o processo (opcional)." : "Edite as regras lógicas que a IA usará para aprovar ou reprovar."}</p>
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="text-lg font-bold text-gray-800 dark:text-gray-100">{isOtimizada ? "3. Instruções Globais Complementares" : "2. Critérios da IA (Prompt)"}</h2>
+                                        <Tooltip text={isOtimizada ? "Opcional. Instruções gerais que se aplicam a toda a análise, não a um documento específico. Como você está usando a IA Otimizada, o foco deve estar nos módulos acima." : "Edite as regras lógicas gerais que a IA usará para analisar todos os documentos."} enabled={appSettings.showTooltips} position="top">
+                                            <i className="fas fa-info-circle text-gray-400 hover:text-emerald-500 cursor-help"></i>
+                                        </Tooltip>
+                                        {isOtimizada && (
+                                            <label className="flex items-center cursor-pointer ml-4">
+                                                <div className="relative">
+                                                    <input type="checkbox" className="sr-only" 
+                                                        checked={context.useGlobalInstructions !== false} 
+                                                        onChange={(e) => setContext({...context, useGlobalInstructions: e.target.checked})} 
+                                                    />
+                                                    <div className={`block w-10 h-6 rounded-full transition-colors ${context.useGlobalInstructions !== false ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
+                                                    <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${context.useGlobalInstructions !== false ? 'transform translate-x-4' : ''}`}></div>
+                                                </div>
+                                                <span className="ml-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+                                                    {context.useGlobalInstructions !== false ? 'Habilitado' : 'Desabilitado'}
+                                                </span>
+                                            </label>
+                                        )}
+                                    </div>
+                                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">{isOtimizada ? "Regras gerais aplicadas a todo o processo (opcional)." : "Edite as regras lógicas que a IA usará para aprovar ou reprovar."}</p>
                                 </div>
                             </div>
                             {context.regulationText && (
@@ -1635,7 +1643,7 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
                         </div>
                         
                         <div className="relative">
-                            {isOtimizada && (
+                            {isOtimizada && context.useGlobalInstructions !== false && (
                                 <div className="mb-4 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-100 dark:border-blue-800/50 flex items-start gap-3">
                                     <i className="fas fa-lightbulb text-blue-500 mt-1"></i>
                                     <div className="text-sm text-blue-800 dark:text-blue-300">
@@ -1643,16 +1651,48 @@ const handleContextUpload = async (e: React.ChangeEvent<HTMLInputElement>, type:
                                     </div>
                                 </div>
                             )}
-                            <textarea 
-                                className={`w-full h-96 p-6 text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 ${colorsStyle.accentFocusRing} focus:bg-white dark:focus:bg-gray-800 outline-none resize-y leading-relaxed shadow-inner transition-colors duration-200`}
-                                value={context.criteriaText}
-                                onChange={(e) => setContext({...context, criteriaText: e.target.value})}
-                                spellCheck={false}
-                                maxLength={50000}
-                            />
-                            <div className="absolute bottom-4 right-4 text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
-                                {context.criteriaText.length} caracteres
+                            <div className="mb-4 flex items-center justify-between bg-gray-50 dark:bg-gray-800 p-4 rounded border border-gray-200 dark:border-gray-700">
+                                <div>
+                                    <div className="font-bold text-sm text-gray-800 dark:text-gray-200">
+                                        Enviar Arquivos de Contexto na Análise
+                                    </div>
+                                    <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                        Se desativado, o Regulamento e o Formulário não serão enviados para a IA durante a análise, apenas estes critérios (prompt) e os documentos do candidato.
+                                    </div>
+                                </div>
+                                <label className="flex items-center cursor-pointer ml-4 flex-shrink-0">
+                                    <div className="relative">
+                                        <input type="checkbox" className="sr-only" 
+                                            checked={context.excludeContextInAnalysis !== true} 
+                                            onChange={(e) => setContext({...context, excludeContextInAnalysis: !e.target.checked})} 
+                                        />
+                                        <div className={`block w-10 h-6 rounded-full transition-colors ${context.excludeContextInAnalysis !== true ? 'bg-emerald-500' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
+                                        <div className={`absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform ${context.excludeContextInAnalysis !== true ? 'transform translate-x-4' : ''}`}></div>
+                                    </div>
+                                </label>
                             </div>
+
+                            {(!isOtimizada || context.useGlobalInstructions !== false) ? (
+                                <>
+                                    <textarea 
+                                        className={`w-full h-96 p-6 text-sm font-mono text-gray-800 dark:text-gray-200 bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 ${colorsStyle.accentFocusRing} focus:bg-white dark:focus:bg-gray-800 outline-none resize-y leading-relaxed shadow-inner transition-colors duration-200`}
+                                        value={context.criteriaText}
+                                        onChange={(e) => setContext({...context, criteriaText: e.target.value})}
+                                        spellCheck={false}
+                                        maxLength={50000}
+                                    />
+                                    <div className="absolute bottom-4 right-4 text-xs text-gray-400 dark:text-gray-500 bg-gray-100 dark:bg-gray-800 px-2 py-1 rounded">
+                                        {context.criteriaText.length} caracteres
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="w-full h-40 p-6 flex items-center justify-center bg-gray-50 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-400">
+                                    <div className="text-center">
+                                        <i className="fas fa-eye-slash text-2xl mb-2"></i>
+                                        <p>Instruções Globais Desabilitadas</p>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                    </div>
 
@@ -2057,7 +2097,75 @@ NÃO USE ESTES TEXTOS COMO EVIDÊNCIA DO CANDIDATO. ELES SÃO APENAS AS REGRAS.
           </footer>
       </main>
       
-      <RepositoryPickerDialog 
+          {/* MODALS OVERLAY */}
+          <AnimatePresence>
+          {activeModal && (
+            <div 
+              className="fixed inset-0 z-[100] flex justify-end bg-black/40 backdrop-blur-sm transition-opacity"
+              onClick={() => setActiveModal(null)}
+            >
+               <motion.div 
+                 initial={{ x: '100%', opacity: 0 }}
+                 animate={{ x: 0, opacity: 1 }}
+                 exit={{ x: '100%', opacity: 0 }}
+                 transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+                 className="w-full max-w-4xl h-full bg-white dark:bg-gray-900 shadow-2xl flex flex-col overflow-hidden"
+                 onClick={(e) => e.stopPropagation()}
+               >
+                  <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/50">
+                     <div className="flex items-center gap-6 overflow-x-auto hide-scrollbar">
+                        <button 
+                            onClick={() => setActiveModal('SETTINGS')} 
+                            className={`flex items-center whitespace-nowrap text-lg font-bold transition-colors pb-1 border-b-2 ${activeModal === 'SETTINGS' ? 'text-gray-800 dark:text-gray-100 border-prosas-blue' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-transparent'}`}
+                        >
+                            <i className="fas fa-cog mr-2"></i>Configurações
+                        </button>
+                        <button 
+                            onClick={() => setActiveModal('IDEAS')} 
+                            className={`flex items-center whitespace-nowrap text-lg font-bold transition-colors pb-1 border-b-2 ${activeModal === 'IDEAS' ? 'text-gray-800 dark:text-gray-100 border-prosas-blue' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-transparent'}`}
+                        >
+                            <i className="fas fa-lightbulb mr-2"></i>Ideias e Notas
+                        </button>
+                        <button 
+                            onClick={() => setActiveModal('REPOSITORY')} 
+                            className={`flex items-center whitespace-nowrap text-lg font-bold transition-colors pb-1 border-b-2 ${activeModal === 'REPOSITORY' ? 'text-gray-800 dark:text-gray-100 border-prosas-blue' : 'text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 border-transparent'}`}
+                        >
+                            <i className="fas fa-folder-open mr-2"></i>Repositório
+                        </button>
+                     </div>
+                     <button onClick={() => setActiveModal(null)} className="text-gray-500 hover:text-gray-800 dark:hover:text-gray-200 p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors ml-4 flex-shrink-0">
+                        <i className="fas fa-times text-xl"></i>
+                     </button>
+                  </div>
+                  <div className="flex-1 overflow-auto p-6">
+                     {activeModal === 'IDEAS' && (
+                          <IdeasScreen
+                            ideas={ideas}
+                            setIsIdeaModalOpen={setIsIdeaModalOpen}
+                            setSelectedIdea={setSelectedIdea}
+                          />
+                     )}
+                     {activeModal === 'REPOSITORY' && (
+                          <RepositoryScreen
+                            appSettings={appSettings}
+                          />
+                     )}
+                     {activeModal === 'SETTINGS' && (
+                          <SettingsScreen 
+                            isDarkMode={isDarkMode}
+                            setIsDarkMode={setIsDarkMode}
+                            appSettings={appSettings}
+                            setAppSettings={setAppSettings}
+                            user={user}
+                            handleSetStage={handleSetStage}
+                          />
+                     )}
+                  </div>
+               </motion.div>
+            </div>
+          )}
+          </AnimatePresence>
+            <RepositoryPickerDialog 
         isOpen={isRepoPickerOpen} 
         onClose={() => setIsRepoPickerOpen(false)} 
         onSelect={handleRepoFileSelect} 

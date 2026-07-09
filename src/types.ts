@@ -61,7 +61,9 @@ export interface AuditContext {
   regulationText: string;
   formTemplateText: string;
   miscFilesText: string;
-  criteriaText: string; 
+  criteriaText: string;
+  useGlobalInstructions?: boolean; 
+  excludeContextInAnalysis?: boolean; // Se verdadeiro, não envia o regulamento/formulário durante a análise
   referenceDate: string; // Data do edital/prazo de inscrição
   authRules: DocumentAuthRule[];
   promptModules?: DocumentPromptModule[];
@@ -185,7 +187,9 @@ export interface AppSettings {
   autoSaveDrive: boolean;
   compactMode: boolean;
   showTooltips: boolean;
-  aiModel?: string;
+  aiModel?: string; // Legacy
+  aiModelEconomico?: string;
+  aiModelPotente?: string;
   extractTextLocal?: boolean;
   maxAiRetries?: number;
   visualTheme?: string;

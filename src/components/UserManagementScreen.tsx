@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { UserProfile } from '../types';
 import { subscribeToUsers, updateUserRole, adminCreateUser, updateUserProfile, deleteUserProfile, fetchAllTemporaryPasswords } from '../services/storageService';
 import { useAuth } from '../contexts/AuthContext';
+import { useToast } from '../contexts/ToastContext';
 
 const UserManagementScreen: React.FC = () => {
     const [users, setUsers] = useState<UserProfile[]>([]);
@@ -13,6 +14,7 @@ const UserManagementScreen: React.FC = () => {
 
     const { user: currentUser } = useAuth();
     const isAdmin = currentUser?.role === 'admin';
+    const { success, error: toastError, warning } = useToast();
 
     // Form State (New User)
     const [newUserName, setNewUserName] = useState('');
@@ -80,7 +82,7 @@ const UserManagementScreen: React.FC = () => {
             setUserCredentials(prev => ({ ...prev, [uid]: newPass.trim() }));
             setUpdatingUserId(null);
         } else if (newPass) {
-            alert('A senha deve ter pelo menos 6 caracteres.');
+            toastError('Ação negada: A senha deve ter pelo menos 6 caracteres.');
         }
     };
 
@@ -117,9 +119,9 @@ const UserManagementScreen: React.FC = () => {
             setNewUserRole('viewer');
 
             if ((newProf as any).isUpdatingExisting) {
-                alert(`Aviso: O e-mail ${newUserEmail} já estava cadastrado no banco de dados. O perfil existente foi atualizado em vez de criar um novo.`);
+                warning(`Aviso: O e-mail ${newUserEmail} já estava cadastrado no banco de dados. O perfil existente foi atualizado em vez de criar um novo.`);
             } else if ((newProf as any).isPreRegistration) {
-                alert(`O usuário foi cadastrado, mas o e-mail ${newUserEmail} já possuía uma conta (provavelmente via Google). A senha anterior foi mantida.`);
+                warning(`O usuário foi cadastrado, mas o e-mail ${newUserEmail} já possuía uma conta (provavelmente via Google). A senha anterior foi mantida.`);
             }
 
         } catch (error: any) {
@@ -657,7 +659,7 @@ const UserManagementScreen: React.FC = () => {
                                         try {
                                             await deleteUserProfile(uid);
                                         } catch (err: any) {
-                                            alert('Erro ao excluir usuário: ' + (err.message || err));
+                                            toastError('Erro ao excluir usuário: ' + (err.message || err));
                                         } finally {
                                             setUpdatingUserId(null);
                                         }

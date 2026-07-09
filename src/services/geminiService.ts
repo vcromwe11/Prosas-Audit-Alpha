@@ -1,13 +1,60 @@
 
 import { GoogleGenAI } from "@google/genai";
 
-const getAiModel = () => {
+export interface AiModelConfig {
+    name: string;
+    displayName: string;
+}
+
+export const getAvailableModels = async (): Promise<AiModelConfig[]> => {
+    try {
+        const response = await fetch('/v1beta/models');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch models: ${response.status}`);
+        }
+        const data = await response.json();
+        
+        if (data && data.models) {
+            const models = data.models
+                .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+                .map((m: any) => ({
+                    name: m.name.replace('models/', ''),
+                    displayName: m.displayName || m.name.replace('models/', '')
+                }));
+            return models;
+        }
+    } catch (e) {
+        console.error("Error fetching models:", e);
+    }
+    
+    // Fallback if network fails
+    return [
+        { name: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash (Fallback Seguro)' }
+    ];
+};
+
+export const getAiModelEconomico = () => {
     try {
         if (typeof window !== 'undefined') {
             const stored = localStorage.getItem('prosas_app_settings');
             if (stored) {
                 const settings = JSON.parse(stored);
-                if (settings.aiModel) { if (settings.aiModel === 'gemini-3.5-flash') return 'gemini-2.5-flash'; return settings.aiModel; }
+                if (settings.aiModelEconomico) return settings.aiModelEconomico;
+                if (settings.aiModel) return settings.aiModel;
+            }
+        }
+    } catch (e) {}
+    return 'gemini-2.5-flash'; // Fallback
+};
+
+export const getAiModelPotente = () => {
+    try {
+        if (typeof window !== 'undefined') {
+            const stored = localStorage.getItem('prosas_app_settings');
+            if (stored) {
+                const settings = JSON.parse(stored);
+                if (settings.aiModelPotente) return settings.aiModelPotente;
+                if (settings.aiModel) return settings.aiModel;
             }
         }
     } catch (e) {}
@@ -28,16 +75,47 @@ export const executeWithRetry = async <T>(
             if (error.message === "AbortError") throw error;
             
             let status = error.status || error.response?.status;
-            let errorMessage = error.message || JSON.stringify(error);
+            let errorMessage = typeof error === 'string' ? error : (error.message || JSON.stringify(error));
             if (errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("429")) {
                 status = 429;
             }
             const isRateLimit = status === 429;
             const isServerOverload = status === 503;
+            const isNetworkError = errorMessage.includes("Failed to fetch") || errorMessage.includes("NetworkError");
+            const isParsingError = errorMessage.includes("Unexpected token") || errorMessage.includes("SyntaxError: Unexpected token");
             
-            if ((isRateLimit || isServerOverload) && i < retries - 1) {
-                const waitTime = baseDelay * Math.pow(2, i) + Math.random() * 2000;
-                console.warn(`Erro ${status || '429'} (Tentativa ${i + 1}/${retries}). Aguardando ${(waitTime/1000).toFixed(1)}s...`);
+            // Verifica se é cota diária esgotada
+            if (isRateLimit && errorMessage.includes("PerDay")) {
+                let dailyQuotaModel = "o modelo atual";
+                let dailyQuotaLimit = "desconhecido";
+                
+                const modelMatch = errorMessage.match(/"model"\s*:\s*"([^"]+)"/) || errorMessage.match(/model:\s*([^\s,]+)/);
+                if (modelMatch && modelMatch[1]) dailyQuotaModel = modelMatch[1];
+                
+                const limitMatch = errorMessage.match(/"quotaValue"\s*:\s*"?([^" ,}]+)"?/) || errorMessage.match(/limit:\s*([^\s,]+)/);
+                if (limitMatch && limitMatch[1]) dailyQuotaLimit = limitMatch[1];
+                
+                throw new Error(`Cota diária gratuita esgotada para o modelo ${dailyQuotaModel} (limite: ${dailyQuotaLimit} requisições/dia). Troque de modelo em Configurações > Avançado ou aguarde o próximo dia.`);
+            }
+            
+            if ((isRateLimit || isServerOverload || isNetworkError || isParsingError) && i < retries - 1) {
+                let waitTime = baseDelay * Math.pow(2, i) + Math.random() * 2000;
+                
+                // Try to parse explicit retry delay from error message (e.g., "Please retry in 11.75s")
+                const retryMatch = errorMessage.match(/retry in ([0-9.]+)s/i) || errorMessage.match(/retryDelay["']?\s*:\s*["']?([0-9.]+)s/i);
+                if (retryMatch && retryMatch[1]) {
+                    const parsedDelay = parseFloat(retryMatch[1]) * 1000;
+                    if (!isNaN(parsedDelay) && parsedDelay > 0) {
+                        waitTime = Math.max(waitTime, parsedDelay + 2000); // add 2s buffer
+                    }
+                }
+                
+                // Force a longer wait if we hit free tier limits
+                if (isRateLimit && waitTime < 15000) {
+                    waitTime = 60000 + Math.random() * 5000;
+                }
+                
+                console.warn(`Erro ${status || (isNetworkError ? 'Rede' : '429')} (Tentativa ${i + 1}/${retries}). Aguardando ${(waitTime/1000).toFixed(1)}s...`);
                 
                 await new Promise<void>((resolve, reject) => {
                     const timeout = setTimeout(resolve, waitTime);
@@ -65,14 +143,46 @@ export const callGeminiWithRetry = async (
         config?: any;
     },
     retries = 5,
-    baseDelay = 10000
+    baseDelay = 10000,
+    taskType = 'padrao',
+    editalName?: string
 ): Promise<any> => {
-    return executeWithRetry(() => ai.models.generateContent(options), retries, baseDelay);
+    let approxChars = 0;
+    if (typeof options.contents === 'string') {
+        approxChars = options.contents.length;
+    } else if (Array.isArray(options.contents)) {
+        approxChars = JSON.stringify(options.contents).length;
+    } else if (options.contents?.parts) {
+        approxChars = JSON.stringify(options.contents.parts).length;
+    }
+
+    try {
+        const result = await executeWithRetry(() => ai.models.generateContent(options), retries, baseDelay);
+        logAiUsage({
+            model: options.model,
+            taskType,
+            success: true,
+            approxChars,
+            editalName
+        });
+        return result;
+    } catch (e: any) {
+        const errorMessage = typeof e === 'string' ? e : (e.message || JSON.stringify(e));
+        logAiUsage({
+            model: options.model,
+            taskType,
+            success: false,
+            errorMessage,
+            approxChars,
+            editalName
+        });
+        throw e;
+    }
 };
 
 import { DEFAULT_DOCUMENT_CRITERIA } from "../constants";
 import { PROMPTS } from "../prompts";
-import { getGlobalPrompt } from "./storageService";
+import { getGlobalPrompt, logAiUsage } from "./storageService";
 import { fileToBase64, extractTextFromPdf } from "./pdfService";
 import { AuditResult, DocumentAuthRule, DocumentPromptModule } from "../types";
 import { RULE_TEMPLATES } from "./ruleTemplates";
@@ -96,7 +206,7 @@ export interface AuthRulesGenerationResult {
 }
 
 export const generateAuthRulesFromRegulation = async (regulationText: string, formTemplateText: string, referenceDate: string): Promise<AuthRulesGenerationResult> => {
-    const ai = getClient();    const model = getAiModel(); 
+    const ai = getClient();    const model = getAiModelPotente(); 
     
     const basePrompt = await getGlobalPrompt('AUTH_RULES_GENERATION', PROMPTS.AUTH_RULES_GENERATION);
 
@@ -118,7 +228,7 @@ ${formTemplateText.substring(0, 15000)}
                 responseMimeType: "application/json",
                 temperature: 0.2
             }
-        });
+        }, 5, 10000, 'geracao_regras_auth');
         const text = response.text || "{}";
         const result = JSON.parse(text);
         
@@ -153,7 +263,7 @@ ${formTemplateText.substring(0, 15000)}
 
 export const generateCriteriaFromRegulation = async (regulationText: string, mode: PromptGenerationMode = 'standard', authRules: DocumentAuthRule[] = []): Promise<string> => {
     const ai = getClient();
-    const model = getAiModel(); 
+    const model = getAiModelPotente(); 
     
     let promptInstruction = '';
     
@@ -216,7 +326,7 @@ export const runDocumentAudit = async (
 ): Promise<{ result: AuditResult, promptText: string }> => {
     const ai = getClient();
     // UPGRADE: Utilizando o modelo Pro para maior capacidade de raciocínio (Thinking)
-    const model = getAiModel(); 
+    const model = getAiModelPotente(); 
     
     // 1. Construção do Payload Intercalado (Texto + Arquivo)
     // Isso é CRUCIAL para a IA saber qual arquivo é qual.
@@ -283,13 +393,11 @@ export const runDocumentAudit = async (
     
     if (isOtimizada && promptModules && promptModules.length > 0) {
         // Triage Step
-        onProgress?.('TRIAGEM: Identificando documentos com Gemini 3.5 Flash...');
+        onProgress?.('TRIAGEM: Identificando documentos com modelo ágil...');
         
-        const triageClient = new GoogleGenAI({
-            apiKey: "proxy",
-            httpOptions: { baseUrl: window.location.origin }
-        });
-        const triageModel = 'gemini-2.5-flash';
+        const modelEconomico = getAiModelEconomico();
+        
+        const baseModuleSystemInstruction = await getGlobalPrompt('AUDIT_MODULE_SYSTEM_INSTRUCTION', PROMPTS.AUDIT_MODULE_SYSTEM_INSTRUCTION);
         
         const activeModulesList = promptModules.map(m => `- ${m.documentType}: ${m.description}`).join("\n");
         const candidateDocumentsList = candidateFiles.map(f => `- ${f.name}`).join("\n");
@@ -305,8 +413,8 @@ export const runDocumentAudit = async (
         
         let documentMapping: any = {};
         try {
-            const triageResponse = await callGeminiWithRetry(triageClient, {
-                model: triageModel,
+            const triageResponse = await callGeminiWithRetry(ai, {
+                model: modelEconomico,
                 contents: triageParts,
                 config: {
                     responseMimeType: 'application/json',
@@ -337,7 +445,7 @@ export const runDocumentAudit = async (
             
             const specificModulePrompt = `MÓDULO DE VALIDAÇÃO: ${module.documentType}\nDESCRIÇÃO: ${module.description}\n\nINSTRUÇÕES ESPECÍFICAS DESTE MÓDULO:\n${module.promptInstructions}\n\nATENÇÃO: A triagem indicou que o(s) seguinte(s) documento(s) pertence(m) a este módulo: ${filesForModuleNames.length > 0 ? filesForModuleNames.join(", ") : "NENHUM DOCUMENTO ENCONTRADO."}\nSe este módulo exigir a presença de um documento e ele não estiver na lista, repita "NENHUM DOCUMENTO ENCONTRADO" no campo de evidência e reprove o ponto. Se este for um módulo lógico (ex: orquestração, regras globais) que não exige um arquivo específico por si só, ignore o aviso de documento não encontrado e faça a validação solicitada com base nas informações gerais.\n\nREGRAS GERAIS E CONTEXTO:\n${criteria}`;
 
-            const moduleParts: any[] = [{ text: systemInstructionText + "\n\n" + specificModulePrompt + "\n\n" + userTaskPromptText }];
+            const moduleParts: any[] = [{ text: baseModuleSystemInstruction + "\n\n" + specificModulePrompt + "\n\n" + userTaskPromptText }];
             for (const fileParts of filePartsArrays) {
                 const fileText = (fileParts[0] as any).text;
                 const fileNameMatch = fileText.match(/=== INÍCIO DO (?:TEXTO EXTRAÍDO DO )?ARQUIVO DO CANDIDATO: "([^"]+)" ===/);
@@ -350,7 +458,7 @@ export const runDocumentAudit = async (
             
             try {
                 const response = await callGeminiWithRetry(ai, {
-                    model: model,
+                    model: modelEconomico,
                     contents: moduleParts,
                     config: { responseMimeType: 'application/json', temperature: 0.1 }
                 }, maxAiRetries);
@@ -418,12 +526,13 @@ Retorne EXCLUSIVAMENTE um JSON neste formato:
                 points: allPoints
             };
         }
+        await setCachedAudit(cacheKey, finalResult, fullPromptText);
         return { result: finalResult, promptText: "Fluxo de IA Otimizada (Triagem -> Análise por Módulo -> Orquestração)" };
     }
 
     let jsonString = "";
     try {
-        jsonString = await generateContentWithSmartRetry(ai, model, parts, systemInstructionText, maxAiRetries, 8000, signal, onProgress);
+        jsonString = await generateContentWithSmartRetry(ai, model, parts, systemInstructionText, maxAiRetries, 8000, signal, onProgress, 'analise_tradicional');
     } catch (e: any) {
         if (e.message === "AbortError") throw e;
         if (e.partialText) {
@@ -496,12 +605,15 @@ const generateContentWithSmartRetry = async (
     retries = 3, 
     baseDelay = 8000,
     signal?: AbortSignal,
-    onProgress?: (text: string) => void
+    onProgress?: (text: string) => void,
+    taskType = 'analise',
+    editalName?: string
 ): Promise<string> => {
     let lastPartialText = "";
+    const approxChars = JSON.stringify(parts).length + systemInstruction.length;
     
     try {
-        return await executeWithRetry(async () => {
+        const result = await executeWithRetry(async () => {
             if (onProgress) {
                 const streamPromise = async () => {
                     lastPartialText = "";
@@ -550,11 +662,17 @@ const generateContentWithSmartRetry = async (
                 return response.text || "";
             }
         }, retries, baseDelay, signal);
+        
+        logAiUsage({ model, taskType, success: true, approxChars, editalName });
+        return result;
     } catch (error: any) {
         if (error.message === "AbortError") throw error;
+        const errorMessage = typeof error === 'string' ? error : (error.message || JSON.stringify(error));
+        logAiUsage({ model, taskType, success: false, errorMessage, approxChars, editalName });
+
         
         let status = error.status || error.response?.status;
-        let errorMessage = error.message || JSON.stringify(error);
+        
         if (errorMessage.includes("RESOURCE_EXHAUSTED") || errorMessage.includes("429")) {
             status = 429;
         }

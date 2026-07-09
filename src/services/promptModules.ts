@@ -6,13 +6,14 @@ import { GoogleGenAI } from '@google/genai';
 import { getGlobalPrompt } from './storageService';
 import { PROMPTS } from '../prompts';
 
-const getAiModel = () => {
+const getAiModelPotente = () => {
     try {
         if (typeof window !== 'undefined') {
             const stored = localStorage.getItem('prosas_app_settings');
             if (stored) {
                 const settings = JSON.parse(stored);
-                if (settings.aiModel) { if (settings.aiModel === 'gemini-3.5-flash') return 'gemini-2.5-flash'; return settings.aiModel; }
+                if (settings.aiModelPotente) return settings.aiModelPotente;
+                if (settings.aiModel) return settings.aiModel;
             }
         }
     } catch (e) {}
@@ -139,7 +140,7 @@ export async function generatePromptModulesFromRegulation(
 
     try {
         const response = await ai.models.generateContent({
-            model: getAiModel(), // Using Pro for better instruction adjustment
+            model: getAiModelPotente(), // Using Pro for better instruction adjustment
             contents: prompt,
             config: {
                 temperature: 0.2,

@@ -16,10 +16,21 @@ export const useAppSettings = (stage: AppStage) => {
       if (saved) {
         try {
           const parsed = JSON.parse(saved);
-          if (parsed.aiModel === 'gemini-3.5-flash') {
+          
+          const obsoleteModels = ['gemini-3.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.0-pro-exp-0205'];
+          if (obsoleteModels.includes(parsed.aiModel)) {
               parsed.aiModel = 'gemini-2.5-flash';
               localStorage.setItem('prosas_app_settings', JSON.stringify(parsed));
           }
+          if (obsoleteModels.includes(parsed.aiModelEconomico)) {
+              parsed.aiModelEconomico = 'gemini-2.5-flash';
+              localStorage.setItem('prosas_app_settings', JSON.stringify(parsed));
+          }
+          if (obsoleteModels.includes(parsed.aiModelPotente)) {
+              parsed.aiModelPotente = 'gemini-2.5-flash';
+              localStorage.setItem('prosas_app_settings', JSON.stringify(parsed));
+          }
+
           return { theme: 'classic', visualTheme: 'classic', ...parsed };
         } catch (e) {}
       }

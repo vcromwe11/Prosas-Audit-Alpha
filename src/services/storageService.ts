@@ -225,6 +225,53 @@ export const updateUserRole = async (uid: string, newRole: 'admin' | 'analyst' |
   await logAuditAction('ALTERAR_PERMISSAO', { targetUserId: uid, newRole });
 };
 
+export interface AiUsageEntry {
+  model: string;
+  taskType: string;
+  success: boolean;
+  errorMessage?: string;
+  approxChars: number;
+  editalName?: string;
+}
+
+export const logAiUsage = async (entry: AiUsageEntry) => {
+  if (!auth.currentUser) return;
+  try {
+    const logId = `${Date.now()}_${auth.currentUser.uid}_${Math.random().toString(36).substr(2, 5)}`;
+    const logEntry: any = {
+      ...entry,
+      timestamp: Date.now(),
+      userId: auth.currentUser.uid,
+      userEmail: auth.currentUser.email
+    };
+    Object.keys(logEntry).forEach(key => {
+      if (logEntry[key] === undefined) {
+        delete logEntry[key];
+      }
+    });
+    await setDoc(doc(db, "ai_usage_logs", logId), logEntry);
+  } catch (error) {
+    console.error("Failed to write AI usage log:", error);
+  }
+};
+
+export const getAiUsageLogs = async (limitCount = 1000, days = 90) => {
+  try {
+    const startDate = Date.now() - (days * 24 * 60 * 60 * 1000);
+    const q = query(
+      collection(db, "ai_usage_logs"),
+      where("timestamp", ">=", startDate),
+      orderBy("timestamp", "desc"),
+      limit(limitCount)
+    );
+    const snapshot = await getDocs(q);
+    return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error("Failed to fetch AI usage logs:", error);
+    return [];
+  }
+};
+
 export const logAuditAction = async (action: string, details: any = {}) => {
   if (!auth.currentUser) return;
   try {
@@ -359,6 +406,56 @@ export const getPrompt = async (promptId: string): Promise<StoredPrompt | null> 
   }
 };
 
+
+const editalIdLocks = new Map<string, Promise<string>>();
+
+export const getOrCreateEditalId = (editalName: string): Promise<string> => {
+    if (!editalIdLocks.has(editalName)) {
+        editalIdLocks.set(editalName, (async () => {
+             const q = query(collection(db, 'reports'), where('editalName', '==', editalName), limit(50));
+             const snap = await getDocs(q);
+             for (const d of snap.docs) {
+                 const existing = d.data();
+                 if (existing.editalId && existing.editalId.trim() !== '') {
+                     return existing.editalId;
+                 }
+             }
+             
+             const counterRef = doc(db, 'ai_audits_cache', 'counters');
+             return await runTransaction(db, async (transaction) => {
+                 const counterDoc = await transaction.get(counterRef);
+                 let nextEdital = 1;
+                 if (counterDoc.exists()) {
+                     const data = counterDoc.data();
+                     if (data.nextEditalSeq) nextEdital = data.nextEditalSeq;
+                 }
+                 const newId = String(nextEdital);
+                 transaction.set(counterRef, { nextEditalSeq: nextEdital + 1 }, { merge: true });
+                 return newId;
+             });
+        })());
+    }
+    return editalIdLocks.get(editalName)!;
+};
+
+export const updateEditalIdCache = (editalName: string, newEditalId: string) => {
+    editalIdLocks.set(editalName, Promise.resolve(newEditalId));
+};
+
+export const getNextPropostaId = async (): Promise<string> => {
+    const counterRef = doc(db, 'ai_audits_cache', 'counters');
+    return await runTransaction(db, async (transaction) => {
+        const counterDoc = await transaction.get(counterRef);
+        let nextProposta = 1;
+        if (counterDoc.exists()) {
+             const data = counterDoc.data();
+             if (data.nextPropostaSeq) nextProposta = data.nextPropostaSeq;
+        }
+        transaction.set(counterRef, { nextPropostaSeq: nextProposta + 1 }, { merge: true });
+        return String(nextProposta);
+    });
+};
+
 export const saveReport = async (editalName: string, result: AuditResult, promptId?: string, documentHash?: string): Promise<SavedReport | null> => {
   if (!auth.currentUser) return null;
   const userId = auth.currentUser.uid;
@@ -371,52 +468,11 @@ export const saveReport = async (editalName: string, result: AuditResult, prompt
   let finalPropostaId = "1";
   
   try {
-      const counterRef = doc(db, 'ai_audits_cache', 'counters');
-      
-      // Try to find an existing editalId for this editalName
-      let existingEditalId = "";
-      const q = query(collection(db, 'reports'), where('editalName', '==', finalEditalName), limit(1));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-          const existing = snap.docs[0].data();
-          if (existing.editalId) {
-              existingEditalId = existing.editalId;
-          }
-      }
-
-      await runTransaction(db, async (transaction) => {
-          const counterDoc = await transaction.get(counterRef);
-          let nextProposta = 1;
-          let nextEdital = 1;
-          
-          if (counterDoc.exists()) {
-              const data = counterDoc.data();
-              if (data.nextPropostaSeq) nextProposta = data.nextPropostaSeq;
-              if (data.nextEditalSeq) nextEdital = data.nextEditalSeq;
-          }
-          
-          finalPropostaId = String(nextProposta);
-          
-          if (existingEditalId) {
-              finalEditalId = existingEditalId;
-          } else {
-              finalEditalId = String(nextEdital);
-              nextEdital++;
-          }
-          
-          nextProposta++;
-          
-          transaction.set(counterRef, {
-              nextPropostaSeq: nextProposta,
-              nextEditalSeq: nextEdital
-          }, { merge: true });
-          
-          // We can't write the report in this transaction easily without changing too much, 
-          // because we need to save it after generating IDs. Wait, we can just save it normally after transaction.
-      });
+      finalEditalId = await getOrCreateEditalId(finalEditalName);
+      finalPropostaId = await getNextPropostaId();
   } catch (e) {
       console.error("Error generating dynamic IDs", e);
-      // Fallback if transaction fails
+      // Fallback se a transação falhar
       finalPropostaId = String(Date.now()).slice(-6);
       finalEditalId = String(Date.now()).slice(-6);
   }
